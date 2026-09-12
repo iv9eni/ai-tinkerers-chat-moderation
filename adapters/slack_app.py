@@ -17,8 +17,8 @@ import threading
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from slack_sdk import WebClient
 
+from adapters.slack_http import KeepAliveSlack
 from adapters.slack_worker import DEEP, TRIAGE, Worker
 from blackline.jobqueue import JobQueue
 
@@ -35,11 +35,12 @@ def main() -> None:
         os.environ.get("QUEUE_DB", "blackline.db"),
         partitions={"triage": workers, "deep": deep_workers},
     )
-    worker = Worker(
-        WebClient(token=os.environ["SLACK_BOT_TOKEN"]),
-        WebClient(token=os.environ["SLACK_USER_TOKEN"]),
-        queue,
-    )
+    # warm, kept-alive connections: the delete decides how long a message stays visible
+    bot = KeepAliveSlack(os.environ["SLACK_BOT_TOKEN"], pool_size=workers + deep_workers)
+    user = KeepAliveSlack(os.environ["SLACK_USER_TOKEN"], pool_size=workers + 2)
+    bot.warm()
+    user.warm()
+    worker = Worker(bot, user, queue)
 
     requeued = queue.recover()
     pruned = queue.prune()
@@ -53,6 +54,8 @@ def main() -> None:
         worker.enqueue(event)
 
     stop = threading.Event()
+    for client in (bot, user):
+        threading.Thread(target=client.keep_warm, args=(stop,), daemon=True).start()
     for topic, n in ((TRIAGE, workers), (DEEP, deep_workers)):
         for p in range(n):
             threading.Thread(
