@@ -143,6 +143,16 @@ def main() -> None:
         health.mark_event()
         worker.enqueue(event)
 
+    @app.action("blackline_restore")
+    def on_restore(ack, body: dict, respond) -> None:
+        ack()
+        actor = (body.get("user") or {}).get("id", "")
+        action = (body.get("actions") or [{}])[0]
+        ok, text = worker.restore_redaction(action.get("value", ""), actor)
+        respond(text=text, response_type="ephemeral", replace_original=False)
+        if ok:
+            health.mark_event()
+
     stop = threading.Event()
     threads: list[threading.Thread] = []
     for client in (bot, user):

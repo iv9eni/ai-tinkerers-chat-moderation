@@ -23,6 +23,7 @@ import time
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+from adapters.redaction_restore import RestoreStore, manager_ids
 from blackline import audit, pipeline
 from blackline.actions import DISGUISED_NOTICE, SPLIT_NOTICE, mask
 from blackline.contract import Decision, Message
@@ -72,11 +73,13 @@ class Worker:
         user: WebClient,
         queue: JobQueue,
         window: ConversationWindow | None = None,
+        restores: RestoreStore | None = None,
     ):
         self.bot = bot
         self.user = user
         self.queue = queue
         self.window = window or ConversationWindow()
+        self.restores = restores or RestoreStore()
         self._names: dict[str, str] = {}
         self._guests: dict[str, bool] = {}
         self._people: dict[str, dict] = {}
@@ -265,19 +268,23 @@ class Worker:
 
     def notify(self, job: Job, decision: Decision, msg: Message, ev: dict) -> None:
         if decision.action == "mask" and reached(job, "deleted") and not reached(job, "reposted"):
+            restore_id = ""
             if decision.related_ids:
                 text = SPLIT_NOTICE.format(n=len(decision.related_ids))
             elif any(f.note == "obfuscated" for f in decision.findings):
                 text = DISGUISED_NOTICE
             else:
                 text = mask(msg.text, [f for f in decision.findings if f.subject != "self"])
-            self.bot.chat_postMessage(
-                channel=msg.channel_id,
-                text=text,
-                username=f"{self.display_name(msg.author_id)} (redacted by Blackline)",
-                icon_emoji=":black_square:",
-                **self._thread(ev),
-            )
+                if manager_ids():
+                    restore_id = self.restores.create(
+                        msg.channel_id,
+                        msg.author_id,
+                        msg.text,
+                        thread_ts=ev.get("thread_ts", ""),
+                    )
+            response = self.bot.chat_postMessage(**self._redacted_post(msg, ev, text, restore_id))
+            if restore_id:
+                self.restores.attach_redacted(restore_id, response.get("ts", ""))
             self.queue.set_stage(job, "reposted")
         if not reached(job, "notified"):
             entities = ", ".join(sorted({f.entity for f in decision.findings}))
@@ -292,6 +299,61 @@ class Worker:
             except SlackApiError as e:
                 log.warning("ephemeral failed: %s", e.response.get("error"))
             self.queue.set_stage(job, "notified")
+
+    def _redacted_post(self, msg: Message, ev: dict, text: str, restore_id: str) -> dict:
+        post = {
+            "channel": msg.channel_id,
+            "text": text,
+            "username": f"{self.display_name(msg.author_id)} (redacted by Blackline)",
+            "icon_emoji": ":black_square:",
+            **self._thread(ev),
+        }
+        if restore_id:
+            post["blocks"] = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "Restore original"},
+                            "action_id": "blackline_restore",
+                            "value": restore_id,
+                            "confirm": {
+                                "title": {"type": "plain_text", "text": "Restore message?"},
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": "Only restore false positives. The original text will be visible in this channel again.",
+                                },
+                                "confirm": {"type": "plain_text", "text": "Restore"},
+                                "deny": {"type": "plain_text", "text": "Cancel"},
+                            },
+                        }
+                    ],
+                },
+            ]
+        return post
+
+    def restore_redaction(self, restore_id: str, actor_id: str) -> tuple[bool, str]:
+        if actor_id not in manager_ids():
+            return False, "Only configured Blackline managers can restore redacted messages."
+        ticket = self.restores.consume(restore_id)
+        if ticket is None:
+            return False, "That restore link expired or was already used."
+        if ticket.redacted_ts:
+            try:
+                self.bot.chat_delete(channel=ticket.channel_id, ts=ticket.redacted_ts)
+            except SlackApiError as e:
+                log.warning("delete redacted copy failed: %s", e.response.get("error"))
+        icon = (self.person(ticket.author_id).get("profile") or {}).get("image_72")
+        self.bot.chat_postMessage(
+            channel=ticket.channel_id,
+            text=ticket.text,
+            username=f"{self.display_name(ticket.author_id)} (restored by Blackline)",
+            **({"icon_url": icon} if icon else {"icon_emoji": ":speech_balloon:"}),
+            **({"thread_ts": ticket.thread_ts} if ticket.thread_ts else {}),
+        )
+        return True, "Restored the original message."
 
     def _log(self, lane: str, msg: Message, d: Decision, held: bool = False) -> None:
         log.info(

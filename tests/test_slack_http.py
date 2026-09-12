@@ -83,6 +83,13 @@ def test_slack_error_raises_like_webclient():
     assert e.value.response.get("error") == "message_not_found"
 
 
+def test_block_kit_payloads_are_json_encoded():
+    ok = FakeResp(200, {"ok": True})
+    c, conns = client([ok])
+    c.chat_postMessage(channel="C1", blocks=[{"type": "section"}])
+    assert "blocks=%5B%7B%22type%22%3A+%22section%22%7D%5D" in conns[0].requests[0][1]
+
+
 def test_warm_opens_every_connection():
     ok = FakeResp(200, {"ok": True})
     c, _ = client([ok, ok, ok], pool_size=3)
