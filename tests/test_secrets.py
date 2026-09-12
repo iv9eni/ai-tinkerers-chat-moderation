@@ -80,7 +80,7 @@ def test_does_not_connect_when_nothing_is_missing(monkeypatch):
 
 
 def test_connect_turns_credential_errors_into_a_clear_message(monkeypatch):
-    import google.cloud.secretmanager as sm
+    sm = pytest.importorskip("google.cloud.secretmanager")
 
     def no_credentials(*a, **k):
         raise RuntimeError("Your default credentials were not found")

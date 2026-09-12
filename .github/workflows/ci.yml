@@ -6,7 +6,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - run: uv sync --extra dev
+      - run: uv sync --extra dev --extra gcp
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - name: policy file is valid
