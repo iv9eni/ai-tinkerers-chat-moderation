@@ -55,4 +55,4 @@ def test_mask_covers_the_whole_run_including_filler():
 def test_policy_masks_card_like():
     msg = Message(id="1", channel_id="C1", author_id="U1", text="x")
     d = policy.decide(msg, tier0.detect_all("1234 xxx 2345 vv 6787 nn 5678"))
-    assert d.action == "block" and d.rule_id == "pci.card.unverified"
+    assert d.action == "mask" and d.rule_id == "pci.card.unverified"

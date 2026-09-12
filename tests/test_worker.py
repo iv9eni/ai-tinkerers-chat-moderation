@@ -85,7 +85,7 @@ def test_card_is_deleted_before_any_other_call(setup):
     w, q, calls, model = setup
     w.enqueue(event(CARD))
     d = run_triage(w, q)
-    assert d.action == "block"
+    assert d.action == "mask"
     assert names(calls)[0] == ("user", "chat_delete")
     assert model["calls"] == [] and "exposed" in d.timing_ms
     assert q.counts().get("deep/queued") is None  # settled in triage, no deep job
@@ -95,9 +95,9 @@ def test_emoji_card_is_deleted_in_triage(setup):
     w, q, calls, model = setup
     w.enqueue(event(EMOJI))
     d = run_triage(w, q)
-    assert d.action == "block" and names(calls)[0] == ("user", "chat_delete")
-    assert ("bot", "chat_postMessage") not in names(calls)
-    assert model["calls"] == []
+    assert d.action == "mask" and names(calls)[0] == ("user", "chat_delete")
+    posted = [kw["text"] for _, m, kw in calls if m == "chat_postMessage"]
+    assert "emoji" in posted[0] and model["calls"] == []
 
 
 def test_pending_model_check_does_not_delay_a_delete(setup):
@@ -105,7 +105,7 @@ def test_pending_model_check_does_not_delay_a_delete(setup):
     w.enqueue(event("standup moved to 10:15", ts="1.1"))
     w.enqueue(event(CARD, ts="1.2"))
     assert run_triage(w, q) is None  # clean so far, handed to the deep lane
-    assert run_triage(w, q).action == "block"  # card removed while the model check still waits
+    assert run_triage(w, q).action == "mask"  # card removed while the model check still waits
     assert ("user", "chat_delete") in names(calls)
     assert model["calls"] == []
     assert q.counts()["deep/queued"] == 1
@@ -118,7 +118,7 @@ def test_retry_after_crash_does_not_delete_twice(setup):
     q.set_stage(job, "deleted")  # crashed after the delete landed
     w.triage(job)
     assert ("user", "chat_delete") not in names(calls)
-    assert ("bot", "chat_postEphemeral") in names(calls)
+    assert ("bot", "chat_postMessage") in names(calls)
 
 
 def test_split_card_deletes_both_messages_in_triage(setup):
