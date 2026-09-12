@@ -12,8 +12,9 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from blackline import pipeline
-from blackline.actions import mask
-from blackline.contract import Message
+from blackline.actions import SPLIT_NOTICE, mask
+from blackline.contract import Decision, Message
+from blackline.window import ConversationWindow
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -21,6 +22,7 @@ log = logging.getLogger("blackline")
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 user_client = WebClient(token=os.environ["SLACK_USER_TOKEN"])
+window = ConversationWindow()
 
 _channel_cache: dict[str, dict] = {}
 
@@ -51,6 +53,61 @@ def to_message(event: dict, client: WebClient) -> Message:
     )
 
 
+def ts_of(message_id: str) -> str:
+    return message_id.split(".", 1)[1]
+
+
+def delete(channel: str, message_ids: list[str]) -> bool:
+    ok = True
+    for mid in message_ids:
+        try:
+            user_client.chat_delete(channel=channel, ts=ts_of(mid))
+        except SlackApiError as e:
+            log.warning("delete %s failed: %s", mid, e.response.get("error"))
+            ok = False
+    return ok
+
+
+def author_name(client: WebClient, user: str) -> str:
+    try:
+        return client.users_info(user=user)["user"].get("real_name") or "someone"
+    except SlackApiError:
+        return "someone"
+
+
+def apply(decision: Decision, msg: Message, client: WebClient) -> None:
+    removing = decision.action in ("mask", "block", "quarantine")
+    targets = decision.related_ids or [msg.id]
+
+    if removing and not delete(msg.channel_id, targets):
+        decision.action = "warn"
+        removing = False
+
+    if removing:
+        window.forget(targets)
+    if decision.action == "mask":
+        if decision.related_ids:
+            text = SPLIT_NOTICE.format(n=len(decision.related_ids))
+        else:
+            # mask only what the policy acted on, never the author's own data
+            hit = [f for f in decision.findings if f.subject != "self"]
+            text = mask(msg.text, hit)
+        client.chat_postMessage(
+            channel=msg.channel_id,
+            text=text,
+            username=f"{author_name(client, msg.author_id)} (redacted by Blackline)",
+            icon_emoji=":black_square:",
+        )
+
+    entities = ", ".join(sorted({f.entity for f in decision.findings}))
+    across = f" across {len(decision.related_ids)} messages" if decision.related_ids else ""
+    client.chat_postEphemeral(
+        channel=msg.channel_id,
+        user=msg.author_id,
+        text=f"Blackline: {decision.action}{across}. {decision.message} ({entities})",
+    )
+
+
 @app.event("message")
 def on_message(event: dict, client: WebClient) -> None:
     subtype = event.get("subtype")
@@ -63,33 +120,22 @@ def on_message(event: dict, client: WebClient) -> None:
         return
 
     msg = to_message(event, client)
-    decision = pipeline.run(msg)
-    log.info("%s %s %s %s", msg.id, decision.action, decision.rule_id, decision.timing_ms)
-    if decision.action in ("allow", "log"):
-        return
-
-    if decision.action in ("mask", "block", "quarantine"):
-        try:
-            user_client.chat_delete(channel=msg.channel_id, ts=event["ts"])
-        except SlackApiError as e:
-            log.warning("delete failed: %s (falling back to warn)", e.response.get("error"))
-            decision.action = "warn"
-
-    if decision.action == "mask":
-        name = client.users_info(user=msg.author_id)["user"].get("real_name", "someone")
-        client.chat_postMessage(
-            channel=msg.channel_id,
-            text=mask(msg.text, decision.findings),
-            username=f"{name} (redacted by Blackline)",
-            icon_emoji=":black_square:",
-        )
-
-    entities = ", ".join(sorted({f.entity for f in decision.findings}))
-    client.chat_postEphemeral(
-        channel=msg.channel_id,
-        user=msg.author_id,
-        text=f"Blackline: {decision.action}. {decision.message} ({entities})",
+    earlier = window.recent(msg)
+    decision = pipeline.run(msg, window=earlier)
+    log.info(
+        "%s %s %s related=%d %s",
+        msg.id,
+        decision.action,
+        decision.rule_id,
+        len(decision.related_ids),
+        decision.timing_ms,
     )
+    if decision.action in ("allow", "log"):
+        window.add(msg)
+        return
+    if decision.action == "warn":
+        window.add(msg)
+    apply(decision, msg, client)
 
 
 if __name__ == "__main__":

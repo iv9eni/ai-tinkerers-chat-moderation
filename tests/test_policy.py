@@ -46,7 +46,7 @@ def test_low_confidence_ignored():
     assert policy.decide(msg(), [f]).action == "allow"
 
 
-def test_mask_keeps_last_four():
+def test_mask_hides_every_card_digit():
     text = "card 4532015112830366 ok"
     f = Finding(entity="CREDIT_CARD", start=5, end=21, confidence=0.97, tier=0)
-    assert mask(text, [f]) == "card ████████████0366 ok"
+    assert mask(text, [f]) == "card " + "\u2588" * 16 + " ok"

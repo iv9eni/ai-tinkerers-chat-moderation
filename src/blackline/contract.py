@@ -62,6 +62,8 @@ class Decision(BaseModel):
     rule_id: str = ""
     message: str = ""  # shown to the author
     findings: list[Finding] = Field(default_factory=list)
+    # ids of every message to remove when data was split across messages
+    related_ids: list[str] = Field(default_factory=list)
     timing_ms: dict[str, int | None] = Field(default_factory=dict)
     model: str | None = None
     cost_usd: float | None = None

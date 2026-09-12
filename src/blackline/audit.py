@@ -21,6 +21,7 @@ def record(msg: Message, decision: Decision) -> dict:
         "rule": decision.rule_id,
         "entities": [f.entity for f in decision.findings],
         "tier": max((f.tier for f in decision.findings), default=None),
+        "related": len(decision.related_ids),
         "timing_ms": decision.timing_ms,
         "model": decision.model,
         "cost_usd": decision.cost_usd,
