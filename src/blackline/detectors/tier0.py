@@ -154,6 +154,15 @@ def _has_filler(text: str, chain: list[tuple[int, int, str]]) -> bool:
     return any(re.search(r"[^\W\d_]", text[a[1] : b[0]]) for a, b in pairwise(chain))
 
 
+def _standalone_card_shape(text: str, chain: list[tuple[int, int, str]]) -> bool:
+    """A message that is only grouped card-shaped digits is suspicious, even if
+    the checksum fails or the first digit is not a real card prefix."""
+    start, end = chain[0][0], chain[-1][1]
+    if text[:start].strip() or text[end:].strip():
+        return False
+    return all(re.fullmatch(r"[\s-]+", text[a[1] : b[0]]) for a, b in pairwise(chain))
+
+
 def detect_grouped(text: str, whole_span: bool = False) -> list[Finding]:
     """Cards whose groups are split by filler words, and card-shaped numbers that fail the
     checksum. Card-shaped needs evidence of intent: filler between groups or a card word."""
@@ -179,7 +188,9 @@ def detect_grouped(text: str, whole_span: bool = False) -> list[Finding]:
                         )
                     ]
                 card_shaped = shape in ([4, 4, 4, 4], [4, 6, 5])
-                if card_shaped and (context or _has_filler(text, part)):
+                if card_shaped and (
+                    context or _has_filler(text, part) or _standalone_card_shape(text, part)
+                ):
                     return [
                         Finding(
                             entity="CARD_LIKE",

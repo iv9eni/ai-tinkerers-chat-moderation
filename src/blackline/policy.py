@@ -107,7 +107,7 @@ class Policy:
     def load(cls, path: str | None = None) -> Policy:
         p = Path(path or os.environ.get("POLICY_FILE", "policies/default.yaml"))
         try:
-            raw = yaml.safe_load(p.read_text())
+            raw = yaml.safe_load(p.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as e:
             raise PolicyError(f"{p}: {e}") from None
         return cls(validate(raw, str(p)))

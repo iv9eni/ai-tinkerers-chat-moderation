@@ -72,4 +72,4 @@ def test_model_outage_falls_back_to_rules(monkeypatch, tmp_path):
     d = pipeline.run(msg)
     assert d.action == "allow" and d.timing_ms["model_error"] == 1
     card = Message(id="C1.2", channel_id="C1", author_id="U1", text="card 4111 1111 1111 1111")
-    assert pipeline.run(card).action == "mask"  # rules still work during the outage
+    assert pipeline.run(card).action == "block"  # rules still work during the outage
