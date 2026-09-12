@@ -45,6 +45,20 @@
   - '0151'
   - 1283 0366
   expect: removed
+- id: split-emoji-no-context
+  category: split
+  messages:
+  - ':four::one::one::one:'
+  - ':one::one::one::one:'
+  - ':one::one::one::one: :one::one::one::one:'
+  expect: removed
+- id: split-bare-digits
+  category: split
+  messages:
+  - '4532'
+  - '0151'
+  - 1283 0366
+  expect: removed
 - id: split-sin
   category: split
   messages:
