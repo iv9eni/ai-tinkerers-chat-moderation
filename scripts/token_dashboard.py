@@ -48,15 +48,20 @@ def token_usage(row: dict[str, Any]) -> dict[str, int]:
 
 
 def summarize(
-    rows: list[dict[str, Any]], assumed_baseline_tokens: int, grams_co2e_per_1k_tokens: float
+    rows: list[dict[str, Any]],
+    assumed_baseline_tokens: int,
+    grams_co2e_per_1k_tokens: float,
+    usd_per_1m_tokens: float,
 ) -> dict[str, Any]:
     total = len(rows)
     model_rows = [r for r in rows if r.get("model")]
     zero_token = total - len(model_rows)
     measured_tokens = sum(token_usage(r).get("total_tokens", 0) for r in model_rows)
     unknown_model_usage = sum(1 for r in model_rows if not token_usage(r).get("total_tokens"))
+    measured_cost_usd = sum(float(r.get("cost_usd") or 0) for r in model_rows)
     local_removed = sum(1 for r in rows if not r.get("model") and r.get("action") in REMOVED)
     estimated_avoided = zero_token * assumed_baseline_tokens
+    estimated_avoided_usd = estimated_avoided / 1_000_000 * usd_per_1m_tokens
     estimated_co2e_g = estimated_avoided / 1000 * grams_co2e_per_1k_tokens
     baseline = total * assumed_baseline_tokens
     call_rate = (len(model_rows) / total * 100) if total else 0
@@ -78,9 +83,12 @@ def summarize(
         "call_rate": call_rate,
         "local_removed": local_removed,
         "measured_tokens": measured_tokens,
+        "measured_cost_usd": measured_cost_usd,
         "unknown_model_usage": unknown_model_usage,
         "assumed_baseline_tokens": assumed_baseline_tokens,
         "estimated_avoided": estimated_avoided,
+        "estimated_avoided_usd": estimated_avoided_usd,
+        "usd_per_1m_tokens": usd_per_1m_tokens,
         "estimated_co2e_g": estimated_co2e_g,
         "grams_co2e_per_1k_tokens": grams_co2e_per_1k_tokens,
         "baseline_tokens": baseline,
@@ -103,6 +111,12 @@ def fmt_co2e(grams: float) -> str:
     if grams >= 1000:
         return f"{grams / 1000:,.2f} kg"
     return f"{grams:,.1f} g"
+
+
+def fmt_usd(value: float) -> str:
+    if value < 0.01:
+        return f"${value:,.4f}"
+    return f"${value:,.2f}"
 
 
 def bar_row(label: str, value: int, total: int) -> str:
@@ -363,6 +377,11 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
         <p>vs {summary["assumed_baseline_tokens"]:,} tokens/message baseline</p>
       </div>
       <div class="card">
+        <div class="label">Estimated spend avoided</div>
+        <div class="value good">{fmt_usd(summary["estimated_avoided_usd"])}</div>
+        <p>Scenario estimate at {fmt_usd(summary["usd_per_1m_tokens"])} / 1M tokens</p>
+      </div>
+      <div class="card">
         <div class="label">Estimated CO2e avoided</div>
         <div class="value good">{fmt_co2e(summary["estimated_co2e_g"])}</div>
         <p>Scenario estimate at {summary["grams_co2e_per_1k_tokens"]:g} g CO2e / 1K tokens</p>
@@ -433,7 +452,7 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
       <div class="card">
         <h2>Measured Model Tokens</h2>
         <div class="value">{fmt_int(summary["measured_tokens"])}</div>
-        <p>Captured from provider usage on new model calls. Historical rows without usage remain counted as model-routed decisions.</p>
+        <p>Captured from provider usage on new model calls. Measured model spend in audited rows: <strong>{fmt_usd(summary["measured_cost_usd"])}</strong>.</p>
         {unknown_note}
       </div>
     </section>
@@ -506,12 +525,26 @@ def main() -> int:
             "Tune this for your model/provider/grid assumptions."
         ),
     )
+    parser.add_argument(
+        "--usd-per-1m-tokens",
+        type=float,
+        default=0.15,
+        help=(
+            "Scenario estimate for blended model cost per 1,000,000 avoided tokens. "
+            "Tune this for your model/provider pricing assumptions."
+        ),
+    )
     args = parser.parse_args()
 
     audit_path = Path(args.audit)
     out_path = Path(args.out)
     rows = load_rows(audit_path)
-    summary = summarize(rows, args.assumed_baseline_tokens, args.grams_co2e_per_1k_tokens)
+    summary = summarize(
+        rows,
+        args.assumed_baseline_tokens,
+        args.grams_co2e_per_1k_tokens,
+        args.usd_per_1m_tokens,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(summary, audit_path), encoding="utf-8")
     print(f"wrote {out_path} from {len(rows):,} audit rows")
@@ -519,6 +552,7 @@ def main() -> int:
         f"zero-token={summary['zero_token']:,} "
         f"model-routed={summary['model_calls']:,} "
         f"estimated-avoided={summary['estimated_avoided']:,} "
+        f"estimated-spend={fmt_usd(summary['estimated_avoided_usd'])} "
         f"estimated-co2e={fmt_co2e(summary['estimated_co2e_g'])}"
     )
     return 0
