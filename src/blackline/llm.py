@@ -24,6 +24,6 @@ def client() -> OpenAI:
 
 
 def models() -> list[str]:
-    primary = os.environ.get("TIER1_MODEL", "openai/gpt-5-mini")
+    primary = os.environ.get("TIER1_MODEL", "openai/gpt-4o-mini")
     fallback = os.environ.get("TIER1_FALLBACK_MODEL")
     return [primary, fallback] if fallback else [primary]
