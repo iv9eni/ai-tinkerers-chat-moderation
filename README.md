@@ -67,6 +67,14 @@ A hit on folded text removes the whole message and posts a notice instead of a m
 
 On GCP, `src/blackline/jobqueue.py` is the one file to swap for Pub/Sub with an ordering key.
 
+## Working together
+
+- `main` always passes CI and is what gets deployed. Nobody pushes to it directly.
+- Each person works on their own branch, named `<name>/<topic>`, for example `ivgeni/hardening`.
+- Open a pull request into `main`. CI runs lint, tests, the policy check, the moderation cases, and a Docker build. Merge when it is green.
+- Pull `main` into your branch before you start something new: `git pull --rebase origin main`.
+- Keep pull requests small, one change each, so the other person can review in a few minutes.
+
 ## Production
 
 **Run it**
