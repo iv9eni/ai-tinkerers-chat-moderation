@@ -31,6 +31,17 @@ Slack event ──> adapters/slack_app.py ──> Message
 - `src/blackline/policy.py` loads `policies/default.yaml` and picks one action.
 - `adapters/slack_app.py` is the only Slack-specific file. A Teams adapter would be a sibling.
 
+## Delivery guarantees
+
+- **Nothing is lost.** The Slack listener writes each event to a SQLite queue (`blackline.db`) before Slack gets its acknowledgement. Jobs left half done by a crash are picked up again on restart.
+- **Downtime is covered.** On startup the bot reads channel history since the last message it finished, and queues anything it missed.
+- **No double actions.** Each message is stored once, keyed by channel and timestamp. Each side effect (delete, repost, notice) is recorded on the job, so a retry skips what already happened.
+- **Order per author.** Jobs are partitioned by channel and author, and a job waiting on retry blocks the ones behind it. Split-message detection depends on this.
+- **Failures are visible.** A job retries with backoff up to 5 times, then is marked dead. `make queue` shows counts and dead jobs.
+- **Delete first.** Workers run the rules with no network calls. On a hit they delete before any lookup or model call. `timing_ms.exposed` in `audit.jsonl` is how long the message was visible.
+
+On GCP, `src/blackline/jobqueue.py` is the one file to swap for Pub/Sub with an ordering key.
+
 ## Run
 
 ```bash

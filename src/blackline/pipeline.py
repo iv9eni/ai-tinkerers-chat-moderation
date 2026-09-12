@@ -48,8 +48,41 @@ def _split_decision(
     return d
 
 
-def run(msg: Message, use_tier1: bool = True, window: list[Message] | None = None) -> Decision:
-    """window: the same author's earlier messages in this channel, oldest first."""
+REMOVING = ("mask", "block", "quarantine")
+
+
+def fast_check(msg: Message, window: list[Message] | None = None) -> Decision | None:
+    """Rules only, no network calls. Returns a decision only when it removes the message,
+    so the caller can delete before doing anything slower."""
+    timing: dict[str, int | None] = {"tier0": None, "split": None, "tier1": None, "window": None}
+    t = time.perf_counter()
+    findings = tier0.detect(msg.text)
+    timing["tier0"] = _ms(t)
+    decision = policy().decide(msg, findings) if findings else None
+    if decision is None or decision.action not in REMOVING:
+        chain = [*(window or []), msg]
+        if len(chain) > 1:
+            t = time.perf_counter()
+            hit = split.detect([m.text for m in chain])
+            timing["split"] = _ms(t)
+            if hit:
+                decision = _split_decision(
+                    msg, chain, hit.entity, hit.message_indexes, hit.confidence, 0
+                )
+    if decision is None or decision.action not in REMOVING:
+        return None
+    decision.timing_ms = timing
+    return decision
+
+
+def run(
+    msg: Message,
+    use_tier1: bool = True,
+    window: list[Message] | None = None,
+    audit_log: bool = True,
+) -> Decision:
+    """window: the same author's earlier messages in this channel, oldest first.
+    audit_log=False when the caller records the audit line itself, after acting."""
     timing: dict[str, int | None] = {"tier0": None, "split": None, "tier1": None, "window": None}
     model = None
     text = msg.text
@@ -102,5 +135,6 @@ def run(msg: Message, use_tier1: bool = True, window: list[Message] | None = Non
     decision = decision or policy().decide(msg, findings)
     decision.timing_ms = timing
     decision.model = model
-    audit.record(msg, decision)
+    if audit_log:
+        audit.record(msg, decision)
     return decision
