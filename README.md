@@ -4,6 +4,34 @@ Governance agent for Slack. Finds card numbers, SINs, secrets, and other people'
 
 Built at AI Tinkerers "Agents, Everywhere" (OpenAI), September 12, 2026.
 
+## For judges
+
+**What it is.** A governance agent that lives inside Slack. Slack's own Data Loss Prevention exists only on Enterprise Grid, cannot redact part of a message, and has no per-channel rules. Blackline installs on any plan from a manifest, reads every message as Slack emits it, and removes card numbers, Social Insurance Numbers, live credentials, and other people's personal data about 0.4 seconds after they are posted. The author gets a private notice that names the rule and the regulation. Nobody else sees the number.
+
+**How it decides.** Two lanes over a durable queue. The triage lane is rules only: seven layers of unfolding turn emoji shortcodes, unicode digits in any script, number words in English, French, and Spanish, and look-alike letters into plain digits before regex and checksums run, in under 5 ms with zero tokens. A per-author window catches a card typed as three messages of emoji. Only messages that pass the rules reach the deep lane, where `gpt-4o-mini` through OpenRouter (fallback `gemini-2.5-flash-lite`) labels whose data it is (self, third party, public), reconstructs numbers described across messages, and returns a codebook for unknown disguises. The model never writes the number; code does the substitution and the Luhn check. Every decision is one audit line with an HMAC fingerprint, never the text.
+
+**Measured today, one laptop, one Slack workspace.**
+
+| Number | What it is |
+|---|---|
+| ~0.4 s | time a message is visible before the delete lands, of which ~170 ms is Slack delivering to clients before any app sees the event |
+| 80 ms | median `chat.delete` call after switching to keep-alive HTTPS (was 124 ms, with 400 to 800 ms spikes) |
+| < 5 ms | rules stage, no network |
+| 57 | labelled moderation cases in `evals/cases.yaml`, 4 marked as known gaps, all run in CI |
+| 182 | tests, run on every pull request |
+| 10 | pull requests merged today, two people coding, `main` protected by CI |
+
+**Where it stands, honestly.**
+
+- *Works end to end for text.* Installed from `slack-manifest.yaml`, Socket Mode, no public URL. Post, detect, delete, private notice, audit line, all live. Ran on a GCP Container-Optimized OS VM this afternoon with tokens from Secret Manager, then stopped so the laptop copy could keep testing, so the deployed copy has had minutes of uptime, not hours. Load was not tested beyond one person typing; `scripts/replay.py` exists but the 20 rps run did not happen. Voice notes and images are designed as a converter in front of the same pipeline and are not built.
+- *Why Slack and not a chatbox.* The agent acts on other people's messages under a policy they never typed, using Slack's own primitives as tools: the owner's token to delete, `chat:write.customize` to repost under the author's name, ephemeral notices, channel history to catch up after downtime, a Block Kit button so a listed manager can restore a false positive. Hold mode (`hold: true` on a channel) deletes every message on arrival and reposts it once checks pass, which gives a no-DLP plan a reviewed channel. What is still thin: the agent does not ask the author a question, offer a fix, or learn a channel's norms. A `/safe` slash command that posts through the agent with zero exposure is the next step.
+- *How it is built.* SQLite queue written before the Slack ack, retries with backoff, dead letter after 5, idempotent side effects recorded as stages, catch-up from channel history on start. Model checks fail open on a 15 s timeout. Queue text is wiped when a job ends. Tokens live in Secret Manager; GitHub secret scanning and push protection are on. Graceful SIGTERM, `/healthz`, JSON logs, non-root container, policy schema validation with hot reload. Rough edges: SQLite means one instance (`src/blackline/jobqueue.py` is the file to swap for Pub/Sub with an ordering key); model evals were run by hand, not in CI; the four known-gap cases (two people each posting half, reversed digits, base64, riddles) are labelled, not fixed.
+- *Who it helps and who stays in control.* Any support, payroll, or recruiting channel on a non-Enterprise plan. Rules cite PCI DSS requirement 3, PIPEDA, and GDPR Articles 4 and 9, so a compliance lead can read `policies/default.yaml` and sign it. Per-channel actions, `#random` never calls a model, the author's notice names the rule, `make token-dashboard` shows what the model cost and what the rules saved. What is missing: an author cannot appeal, policy edits mean editing YAML, and the precision of the self / third-party label has not been measured on a hold-out set. Next: measure subject accuracy on 200 labelled messages, and a console over the audit log where a governance lead edits policy by chat.
+
+**Sponsor products in the build.** OpenAI `gpt-4o-mini` with structured outputs for every model check, chosen after benchmarking (gpt-5-mini too slow for the lane budget, gpt-5-nano miscounted). OpenRouter for routing and fallback, with model and cost per decision in the audit line. GCP for Cloud Build, Artifact Registry, the VM, Secret Manager, and Cloud Logging. Exa (public-figure check on names) and CopilotKit (policy console) were planned and not built.
+
+**Two-minute video.** Problem and a plain card removed; the same card as emoji, as three emoji messages, and with filler words between groups, all zero tokens; "my email is" stays while "her home address is" is masked; hold mode and a policy edit applied without restart; kill and restart with catch-up from history; the architecture figure and the repo URL.
+
 ## Why
 
 Slack's own data-loss prevention only exists on Enterprise Grid, cannot scan attachments, cannot redact part of a message, and has no per-channel rules. Blackline runs on any plan.
