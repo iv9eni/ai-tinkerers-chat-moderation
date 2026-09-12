@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from itertools import pairwise
 
 from blackline.contract import Finding
 from blackline.normalize import normalize
@@ -47,7 +48,13 @@ def _is_ssn(m: str) -> bool:
     return len(d) == 9 and area not in ("000", "666") and not area.startswith("9")
 
 
+STRICT_KEY_PREFIXES = ("AKIA", "ghp_", "xoxb-", "xoxp-", "xoxa-", "AIza")
+
+
 def _is_secret(m: str) -> bool:
+    # strict formats are already specific enough; entropy only guards loose ones like sk-
+    if m.startswith(STRICT_KEY_PREFIXES):
+        return True
     return len(m) >= 20 and shannon_entropy(m) > 3.5
 
 
@@ -120,3 +127,82 @@ def detect_folded(text: str) -> list[Finding]:
                 )
             )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Digit groups with filler between them: "4111 xx 1111 vv 1111 nn 1111"
+# ---------------------------------------------------------------------------
+
+MAX_GAP_CHARS = 8  # spaces plus one short filler word
+
+
+def _chains(text: str) -> list[list[tuple[int, int, str]]]:
+    """Runs of digit groups where each gap is short, on one line, and at most one word."""
+    chains: list[list[tuple[int, int, str]]] = []
+    for m in re.finditer(r"\d+", text):
+        g = (m.start(), m.end(), m.group())
+        if chains and chains[-1]:
+            gap = text[chains[-1][-1][1] : g[0]]
+            if len(gap) <= MAX_GAP_CHARS and "\n" not in gap and len(gap.split()) <= 1:
+                chains[-1].append(g)
+                continue
+        chains.append([g])
+    return [c for c in chains if len(c) >= 2]
+
+
+def _has_filler(text: str, chain: list[tuple[int, int, str]]) -> bool:
+    return any(re.search(r"[^\W\d_]", text[a[1] : b[0]]) for a, b in pairwise(chain))
+
+
+def detect_grouped(text: str, whole_span: bool = False) -> list[Finding]:
+    """Cards whose groups are split by filler words, and card-shaped numbers that fail the
+    checksum. Card-shaped needs evidence of intent: filler between groups or a card word."""
+    context = bool(CARD_CONTEXT.search(text))
+    for chain in _chains(text):
+        for i in range(len(chain)):
+            for j in range(i + 1, len(chain)):
+                part = chain[i : j + 1]
+                digits = "".join(g[2] for g in part)
+                if len(digits) > 19:
+                    break
+                shape = [len(g[2]) for g in part]
+                start, end = (0, len(text)) if whole_span else (part[0][0], part[-1][1])
+                if _is_card(digits):
+                    return [
+                        Finding(
+                            entity="CREDIT_CARD",
+                            start=start,
+                            end=end,
+                            confidence=0.9,
+                            tier=0,
+                            note="grouped",
+                        )
+                    ]
+                card_shaped = shape in ([4, 4, 4, 4], [4, 6, 5])
+                if card_shaped and (context or _has_filler(text, part)):
+                    return [
+                        Finding(
+                            entity="CARD_LIKE",
+                            start=start,
+                            end=end,
+                            confidence=0.75,
+                            tier=0,
+                            note="grouped",
+                        )
+                    ]
+    return []
+
+
+def detect_all(text: str) -> list[Finding]:
+    """Every rule layer, cheapest first. Raw text keeps exact spans for masking."""
+    found = detect(text) or detect_grouped(text) or detect_folded(text)
+    if not found:
+        folded = normalize(text)
+        if folded != text:
+            found = [
+                f.model_copy(update={"note": "obfuscated"})
+                for f in detect_grouped(folded, whole_span=True)
+            ]
+            for f in found:
+                f.end = len(text)
+    return found

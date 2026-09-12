@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 Entity = Literal[
     "CREDIT_CARD",
+    "CARD_LIKE",  # card-shaped but fails the checksum
     "CA_SIN",
     "US_SSN",
     "API_KEY",

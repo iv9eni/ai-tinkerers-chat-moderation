@@ -56,7 +56,7 @@ def fast_check(msg: Message, window: list[Message] | None = None) -> Decision | 
     so the caller can delete before doing anything slower."""
     timing: dict[str, int | None] = {"tier0": None, "split": None, "tier1": None, "window": None}
     t = time.perf_counter()
-    findings = tier0.detect(msg.text) or tier0.detect_folded(msg.text)
+    findings = tier0.detect_all(msg.text)
     timing["tier0"] = _ms(t)
     decision = policy().decide(msg, findings) if findings else None
     if decision is None or decision.action not in REMOVING:
@@ -90,7 +90,7 @@ def run(
 
     # 1. rules on this message alone
     t = time.perf_counter()
-    findings = tier0.detect(text) or tier0.detect_folded(text)
+    findings = tier0.detect_all(text)
     timing["tier0"] = _ms(t)
     decision = policy().decide(msg, findings) if findings else None
 
