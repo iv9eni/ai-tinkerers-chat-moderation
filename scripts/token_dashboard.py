@@ -47,7 +47,9 @@ def token_usage(row: dict[str, Any]) -> dict[str, int]:
     return out
 
 
-def summarize(rows: list[dict[str, Any]], assumed_baseline_tokens: int) -> dict[str, Any]:
+def summarize(
+    rows: list[dict[str, Any]], assumed_baseline_tokens: int, grams_co2e_per_1k_tokens: float
+) -> dict[str, Any]:
     total = len(rows)
     model_rows = [r for r in rows if r.get("model")]
     zero_token = total - len(model_rows)
@@ -55,6 +57,7 @@ def summarize(rows: list[dict[str, Any]], assumed_baseline_tokens: int) -> dict[
     unknown_model_usage = sum(1 for r in model_rows if not token_usage(r).get("total_tokens"))
     local_removed = sum(1 for r in rows if not r.get("model") and r.get("action") in REMOVED)
     estimated_avoided = zero_token * assumed_baseline_tokens
+    estimated_co2e_g = estimated_avoided / 1000 * grams_co2e_per_1k_tokens
     baseline = total * assumed_baseline_tokens
     call_rate = (len(model_rows) / total * 100) if total else 0
     zero_rate = (zero_token / total * 100) if total else 0
@@ -78,6 +81,8 @@ def summarize(rows: list[dict[str, Any]], assumed_baseline_tokens: int) -> dict[
         "unknown_model_usage": unknown_model_usage,
         "assumed_baseline_tokens": assumed_baseline_tokens,
         "estimated_avoided": estimated_avoided,
+        "estimated_co2e_g": estimated_co2e_g,
+        "grams_co2e_per_1k_tokens": grams_co2e_per_1k_tokens,
         "baseline_tokens": baseline,
         "actions": actions,
         "channels": channels,
@@ -92,6 +97,12 @@ def pct(part: float, total: float) -> float:
 
 def fmt_int(value: float) -> str:
     return f"{round(value):,}"
+
+
+def fmt_co2e(grams: float) -> str:
+    if grams >= 1000:
+        return f"{grams / 1000:,.2f} kg"
+    return f"{grams:,.1f} g"
 
 
 def bar_row(label: str, value: int, total: int) -> str:
@@ -182,7 +193,7 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
     .meta {{ text-align: right; font-size: 13px; }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
       gap: 14px;
       margin-bottom: 18px;
     }}
@@ -304,6 +315,11 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
         <div class="value good">{fmt_int(summary["estimated_avoided"])}</div>
         <p>vs {summary["assumed_baseline_tokens"]:,} tokens/message baseline</p>
       </div>
+      <div class="card">
+        <div class="label">Estimated CO2e avoided</div>
+        <div class="value good">{fmt_co2e(summary["estimated_co2e_g"])}</div>
+        <p>Scenario estimate at {summary["grams_co2e_per_1k_tokens"]:g} g CO2e / 1K tokens</p>
+      </div>
     </section>
 
     <section class="layout">
@@ -380,19 +396,29 @@ def main() -> int:
         default=800,
         help="Estimated tokens per message if every message went to the model.",
     )
+    parser.add_argument(
+        "--grams-co2e-per-1k-tokens",
+        type=float,
+        default=0.2,
+        help=(
+            "Scenario estimate for grams of CO2e per 1,000 avoided tokens. "
+            "Tune this for your model/provider/grid assumptions."
+        ),
+    )
     args = parser.parse_args()
 
     audit_path = Path(args.audit)
     out_path = Path(args.out)
     rows = load_rows(audit_path)
-    summary = summarize(rows, args.assumed_baseline_tokens)
+    summary = summarize(rows, args.assumed_baseline_tokens, args.grams_co2e_per_1k_tokens)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(summary, audit_path), encoding="utf-8")
     print(f"wrote {out_path} from {len(rows):,} audit rows")
     print(
         f"zero-token={summary['zero_token']:,} "
         f"model-routed={summary['model_calls']:,} "
-        f"estimated-avoided={summary['estimated_avoided']:,}"
+        f"estimated-avoided={summary['estimated_avoided']:,} "
+        f"estimated-co2e={fmt_co2e(summary['estimated_co2e_g'])}"
     )
     return 0
 
