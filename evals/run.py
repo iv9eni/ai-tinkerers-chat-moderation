@@ -20,6 +20,10 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("AUDIT_FILE", str(Path(tempfile.gettempdir()) / "blackline-evals.jsonl"))
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")  # model cases need OPENROUTER_API_KEY
+
 from blackline import pipeline
 from blackline.contract import Message
 
