@@ -230,6 +230,11 @@
   text: my email is me@example.com
   expect: allow
   needs_model: true
+- id: model-third-party-email
+  category: personal
+  text: Her email is her@example.com
+  expect: removed
+  needs_model: true
 - id: model-phone-3p
   category: personal
   text: call Priya Shah at 519-555-0142 about her claim

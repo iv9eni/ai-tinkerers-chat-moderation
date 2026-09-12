@@ -194,6 +194,31 @@ def test_masked_message_has_manager_restore_button(setup, monkeypatch):
     assert post["blocks"][1]["elements"][0]["value"]
 
 
+def test_third_party_email_has_manager_restore_button(setup, monkeypatch):
+    monkeypatch.setenv("MANAGER_USER_IDS", "UMANAGER")
+    w, q, calls, model = setup
+    text = "Her email is her@example.com"
+    model["single"] = [
+        Finding(
+            entity="EMAIL",
+            start=13,
+            end=len(text),
+            confidence=0.95,
+            subject="third_party",
+            tier=1,
+        )
+    ]
+    w.enqueue(event(text))
+    run_triage(w, q)
+    d = run_deep(w, q)
+
+    [post] = [kw for _, m, kw in calls if m == "chat_postMessage"]
+
+    assert d.action == "mask"
+    assert post["text"] == "Her email is " + "\u2588" * len("her@example.com")
+    assert post["blocks"][1]["elements"][0]["action_id"] == "blackline_restore"
+
+
 def test_manager_can_restore_a_false_positive(setup, monkeypatch):
     monkeypatch.setenv("MANAGER_USER_IDS", "UMANAGER")
     w, q, calls, model = setup
