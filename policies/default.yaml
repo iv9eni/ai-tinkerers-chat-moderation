@@ -67,8 +67,8 @@ rules:
   - id: pii.email.third_party
     entity: EMAIL
     subject: third_party
-    action: warn
-    message: "Sharing someone else's email. Ask before you post it."
+    action: mask
+    message: "Another person's email was masked."
 
   - id: pii.dob.third_party
     entity: DATE_OF_BIRTH

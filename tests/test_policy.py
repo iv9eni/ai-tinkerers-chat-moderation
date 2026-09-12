@@ -41,6 +41,12 @@ def test_third_party_phone_warns_but_logs_in_recruiting():
     assert policy.decide(msg("recruiting"), [f]).action == "log"
 
 
+def test_third_party_email_masks_but_logs_in_recruiting():
+    f = Finding(entity="EMAIL", start=0, end=15, confidence=0.95, subject="third_party", tier=1)
+    assert policy.decide(msg("eng"), [f]).action == "mask"
+    assert policy.decide(msg("recruiting"), [f]).action == "log"
+
+
 def test_low_confidence_ignored():
     f = Finding(entity="ADDRESS", start=0, end=5, confidence=0.5, subject="third_party", tier=1)
     assert policy.decide(msg(), [f]).action == "allow"
