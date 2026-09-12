@@ -56,7 +56,7 @@ def fast_check(msg: Message, window: list[Message] | None = None) -> Decision | 
     so the caller can delete before doing anything slower."""
     timing: dict[str, int | None] = {"tier0": None, "split": None, "tier1": None, "window": None}
     t = time.perf_counter()
-    findings = tier0.detect(msg.text)
+    findings = tier0.detect(msg.text) or tier0.detect_folded(msg.text)
     timing["tier0"] = _ms(t)
     decision = policy().decide(msg, findings) if findings else None
     if decision is None or decision.action not in REMOVING:
@@ -84,12 +84,13 @@ def run(
     """window: the same author's earlier messages in this channel, oldest first.
     audit_log=False when the caller records the audit line itself, after acting."""
     timing: dict[str, int | None] = {"tier0": None, "split": None, "tier1": None, "window": None}
+    timing["encoded"] = None
     model = None
     text = msg.text
 
     # 1. rules on this message alone
     t = time.perf_counter()
-    findings = tier0.detect(text)
+    findings = tier0.detect(text) or tier0.detect_folded(text)
     timing["tier0"] = _ms(t)
     decision = policy().decide(msg, findings) if findings else None
 
@@ -117,6 +118,8 @@ def run(
             jobs["single"] = _pool.submit(tier1.detect, text)
         if windowed:
             jobs["window"] = _pool.submit(tier1.detect_window, texts)
+        if use_tier1 and trigger != "never" and split.looks_encoded(text):
+            jobs["encoded"] = _pool.submit(tier1.detect_encoded, text)
         if "window" in jobs:
             hits, meta = jobs["window"].result()
             timing["window"] = _ms(t)
@@ -124,6 +127,21 @@ def run(
             if hits:
                 entity, idx, conf = hits[0]
                 decision = _split_decision(msg, chain, entity, idx, conf, 1)
+        if "encoded" in jobs:
+            hits, meta = jobs["encoded"].result()
+            timing["encoded"] = _ms(t)
+            model = model or meta.get("model")
+            if hits and (decision is None or decision.action == "allow"):
+                entity, conf = hits[0]
+                f = Finding(
+                    entity=entity,
+                    start=0,
+                    end=len(text),
+                    confidence=conf,
+                    tier=1,
+                    note="obfuscated",
+                )
+                decision = policy().decide(msg, [f])
         if "single" in jobs:
             more, meta = jobs["single"].result()
             timing["tier1"] = _ms(t)

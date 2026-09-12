@@ -174,3 +174,87 @@ def detect_window(texts: list[str]) -> tuple[list[tuple[str, list[int], float]],
             out.append((item["entity"], nums, float(item["confidence"])))
     meta = {"model": r.model, "usage": r.usage.model_dump() if r.usage else None}
     return out, meta
+
+
+# ---------------------------------------------------------------------------
+# Encoded check: the model names which tokens stand for which digit. Code does the
+# substitution and the checksum, so the model never counts or writes the number.
+# ---------------------------------------------------------------------------
+
+CODEBOOK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "tokens": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "token": {"type": "string"},
+                    "digit": {"type": "string", "enum": [str(i) for i in range(10)]},
+                },
+                "required": ["token", "digit"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["tokens"],
+    "additionalProperties": False,
+}
+
+ENCODED_SYSTEM = (
+    "A workplace chat message may hide a number by writing each digit in disguise: emoji or "
+    "emoji names (including custom ones like :num_four:), number words in any language, "
+    "Roman numerals, look-alike letters, or symbols. List each distinct token in the message "
+    "that stands for a single digit, exactly as it appears, with the digit it stands for. "
+    "Do not rebuild or repeat the number. Return an empty list if no token stands for a digit."
+)
+
+
+def decode_with(text: str, pairs: list[tuple[str, str]]) -> str:
+    """Replace each disguised token with its digit, longest token first."""
+    import re
+
+    for token, digit in sorted(pairs, key=lambda p: -len(p[0])):
+        if not token.strip():
+            continue
+        if token.isalpha():
+            text = re.sub(rf"(?<!\w){re.escape(token)}(?!\w)", digit, text, flags=re.IGNORECASE)
+        else:
+            text = text.replace(token, digit)
+    return text
+
+
+def detect_encoded(text: str) -> tuple[list[tuple[str, float]], dict]:
+    import re
+
+    from blackline.detectors.tier0 import CARD_CONTEXT, _scan_run
+    from blackline.normalize import normalize
+
+    r = llm.client().chat.completions.create(
+        model=llm.models()[0],
+        extra_body={"models": llm.models(), "provider": {"sort": "latency"}},
+        temperature=0,
+        max_tokens=300,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "codebook", "strict": True, "schema": CODEBOOK_SCHEMA},
+        },
+        messages=[
+            {"role": "system", "content": ENCODED_SYSTEM},
+            {"role": "user", "content": text},
+        ],
+    )
+    data = json.loads(r.choices[0].message.content or '{"tokens": []}')
+    low = text.lower()
+    # a token the author never typed cannot contribute a digit
+    pairs = [(t["token"], t["digit"]) for t in data.get("tokens", []) if t["token"].lower() in low]
+    decoded = normalize(decode_with(text, pairs))
+    context = bool(CARD_CONTEXT.search(decoded))
+    out: list[tuple[str, float]] = []
+    for run in re.findall(r"\d{9,}", decoded):
+        entity = _scan_run(run, context)
+        if entity:
+            out.append((entity, 0.85))
+            break
+    meta = {"model": r.model, "usage": r.usage.model_dump() if r.usage else None, "tokens": pairs}
+    return out, meta

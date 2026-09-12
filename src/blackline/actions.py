@@ -5,6 +5,9 @@ from __future__ import annotations
 from blackline.contract import Finding
 
 SPLIT_NOTICE = "[sensitive data split across {n} messages was removed by Blackline]"
+DISGUISED_NOTICE = (
+    "[sensitive data written with emoji, words, or look-alike characters was removed by Blackline]"
+)
 
 BAR = "█"
 

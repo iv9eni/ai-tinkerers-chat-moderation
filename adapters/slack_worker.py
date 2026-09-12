@@ -18,7 +18,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from blackline import audit, pipeline
-from blackline.actions import SPLIT_NOTICE, mask
+from blackline.actions import DISGUISED_NOTICE, SPLIT_NOTICE, mask
 from blackline.contract import Decision, Message
 from blackline.jobqueue import Job, JobQueue
 from blackline.window import ConversationWindow
@@ -168,6 +168,8 @@ class Worker:
         if decision.action == "mask" and job.stage == "deleted":
             if decision.related_ids:
                 text = SPLIT_NOTICE.format(n=len(decision.related_ids))
+            elif any(f.note == "obfuscated" for f in decision.findings):
+                text = DISGUISED_NOTICE
             else:
                 text = mask(msg.text, [f for f in decision.findings if f.subject != "self"])
             self.bot.chat_postMessage(

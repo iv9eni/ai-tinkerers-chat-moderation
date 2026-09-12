@@ -7,6 +7,7 @@ import re
 from collections import Counter
 
 from blackline.contract import Finding
+from blackline.normalize import normalize
 
 
 def luhn_ok(digits: str) -> bool:
@@ -80,4 +81,42 @@ def detect(text: str) -> list[Finding]:
                 out.append(
                     Finding(entity=entity, start=span[0], end=span[1], confidence=conf, tier=0)
                 )
+    return out
+
+
+CARD_CONTEXT = re.compile(
+    r"\b(card|cc|visa|master ?card|amex|credit|debit|digits|number|num|exp|cvv|cvc|payment)\b",
+    re.IGNORECASE,
+)
+
+
+def _scan_run(run: str, context: bool) -> str | None:
+    if 13 <= len(run) <= 19:
+        return "CREDIT_CARD" if _is_card(run) else ("CA_SIN" if _is_sin(run) else None)
+    if len(run) == 9:
+        return "CA_SIN" if _is_sin(run) else None
+    if len(run) > 19 and context:
+        # a card glued to other digits: only the start or end of the run, to limit false alarms
+        for n in range(13, 20):
+            if _is_card(run[:n]) or _is_card(run[-n:]):
+                return "CREDIT_CARD"
+    return None
+
+
+def detect_folded(text: str) -> list[Finding]:
+    """Rules on the folded text: emoji, other scripts, number words, look-alike letters.
+    Spans cannot be mapped back, so a hit covers the whole message."""
+    folded = normalize(text)
+    if folded == text:
+        return []
+    context = bool(CARD_CONTEXT.search(folded))
+    out: list[Finding] = []
+    for run in re.findall(r"\d{9,}", folded):
+        entity = _scan_run(run, context)
+        if entity and entity not in {f.entity for f in out}:
+            out.append(
+                Finding(
+                    entity=entity, start=0, end=len(text), confidence=0.9, tier=0, note="obfuscated"
+                )
+            )
     return out

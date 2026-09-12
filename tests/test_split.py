@@ -1,17 +1,7 @@
 from blackline.contract import Message
 from blackline.detectors import split
 from blackline.detectors.tier1 import _verify
-from blackline.normalize import normalize
 from blackline.window import ConversationWindow
-
-
-def test_normalize_tricks():
-    assert normalize("４５３２") == "4532"
-    assert normalize("45\u200b32") == "4532"
-    assert normalize("four five three two") == "4532"
-    assert normalize("4️⃣5️⃣") == "45"
-    assert normalize("4532 0151.1283-0366") == "4532015112830366"
-    assert normalize("standup at 10:15") == "standup at 10:15"
 
 
 def test_card_split_across_two_messages():

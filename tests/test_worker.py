@@ -95,3 +95,14 @@ def test_duplicate_events_are_stored_once(setup):
     assert w.enqueue(event(CARD))
     assert not w.enqueue(event(CARD))
     assert not w.enqueue({**event(CARD), "bot_id": "B1"})
+
+
+def test_emoji_card_is_deleted_on_the_fast_path(setup):
+    w, q, calls, model_calls = setup
+    emoji = ":four::one::one::one: :one::one::one::one: :one::one::one::one: :one::one::one::one:"
+    w.enqueue(event(emoji))
+    d = w.handle(q.claim(0))
+    assert d.action == "mask" and names(calls)[0] == ("user", "chat_delete")
+    assert model_calls == []
+    posted = [kw["text"] for who, m, kw in calls if m == "chat_postMessage"]
+    assert posted and "emoji" in posted[0] and ":four:" not in posted[0]

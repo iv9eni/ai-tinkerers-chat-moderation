@@ -10,14 +10,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from blackline.detectors.tier0 import _is_card, _is_sin
-from blackline.normalize import digit_groups, normalize
+from blackline.detectors.tier0 import CARD_CONTEXT, _is_card, _is_sin
+from blackline.normalize import digit_groups, disguised_digit_count, normalize
 
 CONTEXT = {
-    "CREDIT_CARD": re.compile(
-        r"\b(card|cc|visa|master ?card|amex|credit|debit|digits|number|num|exp|cvv|cvc|payment)\b",
-        re.IGNORECASE,
-    ),
+    "CREDIT_CARD": CARD_CONTEXT,
     "CA_SIN": re.compile(r"\b(sin|social insurance|t4|payroll|digits|number)\b", re.IGNORECASE),
 }
 MAX_GROUPS = 8
@@ -62,4 +59,27 @@ def worth_asking_model(texts: list[str]) -> bool:
     total = sum(len(g) for t in texts for g in digit_groups(t))
     return (
         len(texts) >= 2 and bool(digit_groups(texts[-1])) and len(with_digits) >= 2 and total >= 9
+    )
+
+
+_EMOJI_CODE = re.compile(r":[a-z0-9_+\-]+:")
+_TOKEN = re.compile(r":[a-z0-9_+\-]+:|[^\W\d_]+", re.IGNORECASE)
+
+
+def _digit_like_run(text: str, length: int = 13, max_distinct: int = 10) -> bool:
+    """13+ words or emoji in a row drawn from 10 or fewer distinct values. A card written
+    as words looks like this in any language; ordinary sentences almost never do."""
+    toks = [t.lower() for t in _TOKEN.findall(text)]
+    return any(
+        len(set(toks[i : i + length])) <= max_distinct for i in range(len(toks) - length + 1)
+    )
+
+
+def looks_encoded(text: str) -> bool:
+    """Cheap gate for the model's decode check: many emoji, many digits that only appear after
+    folding, or a long run that uses few distinct words (a number spelled in any language)."""
+    return (
+        len(_EMOJI_CODE.findall(text)) >= 8
+        or disguised_digit_count(text) >= 8
+        or _digit_like_run(text)
     )
