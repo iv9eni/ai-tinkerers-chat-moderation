@@ -29,7 +29,7 @@ class ConversationWindow:
 
     def recent(self, msg: Message, now: float | None = None) -> list[Message]:
         """Earlier messages from the same author in the same channel, oldest first."""
-        now = now or time.time()
+        now = time.time() if now is None else now
         with self._lock:
             q = self._items[self._key(msg)]
             while q and now - q[0][0] > self.max_age_s:
@@ -37,7 +37,7 @@ class ConversationWindow:
             return [m for _, m in q if m.id != msg.id]
 
     def add(self, msg: Message, now: float | None = None) -> None:
-        now = now or time.time()
+        now = time.time() if now is None else now
         with self._lock:
             q = self._items[self._key(msg)]
             for i, (t, m) in enumerate(q):
