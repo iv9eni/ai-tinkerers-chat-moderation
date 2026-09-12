@@ -2,28 +2,67 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 
 from blackline import audit
 from blackline.contract import Decision, Finding, Message
 from blackline.detectors import split, tier0, tier1
-from blackline.policy import Policy
+from blackline.policy import Policy, PolicyError
 
+log = logging.getLogger("blackline")
 _policy: Policy | None = None
+_policy_mtime = 0.0
+_policy_checked = 0.0
 _pool = ThreadPoolExecutor(max_workers=8)
+RELOAD_CHECK_S = 2.0
+MODEL_TIMEOUT_S = 15.0
 
 
 def policy() -> Policy:
-    global _policy
-    if _policy is None:
-        _policy = Policy.load()
+    """The current policy. Edits to the file are picked up within RELOAD_CHECK_S. An invalid
+    edit is rejected and logged, and the previous policy stays in force."""
+    global _policy, _policy_mtime, _policy_checked
+    now = time.monotonic()
+    if _policy is not None and now - _policy_checked < RELOAD_CHECK_S:
+        return _policy
+    _policy_checked = now
+    path = Path(os.environ.get("POLICY_FILE", "policies/default.yaml"))
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = _policy_mtime
+    if _policy is None or mtime != _policy_mtime:
+        try:
+            fresh = Policy.load(str(path))
+        except PolicyError as e:
+            if _policy is None:
+                raise
+            log.error("policy change rejected, keeping the previous policy: %s", e)
+        else:
+            if _policy is not None:
+                log.info("policy reloaded from %s", path)
+            _policy = fresh
+        _policy_mtime = mtime
     return _policy
 
 
 def reload_policy() -> None:
-    global _policy
-    _policy = Policy.load()
+    global _policy, _policy_mtime
+    _policy, _policy_mtime = None, 0.0
+
+
+def _safe(job: Future, timing: dict) -> tuple:
+    """A model outage must not drop a message: log it, count it, continue with the rules."""
+    try:
+        return job.result(timeout=MODEL_TIMEOUT_S)
+    except Exception as e:  # noqa: BLE001
+        timing["model_error"] = (timing.get("model_error") or 0) + 1
+        log.warning("model check failed, continuing with rules only: %r", e)
+        return [], {}
 
 
 def _ms(t: float) -> int:
@@ -121,14 +160,14 @@ def run(
         if use_tier1 and trigger != "never" and split.looks_encoded(text):
             jobs["encoded"] = _pool.submit(tier1.detect_encoded, text)
         if "window" in jobs:
-            hits, meta = jobs["window"].result()
+            hits, meta = _safe(jobs["window"], timing)
             timing["window"] = _ms(t)
             model = meta.get("model")
             if hits:
                 entity, idx, conf = hits[0]
                 decision = _split_decision(msg, chain, entity, idx, conf, 1)
         if "encoded" in jobs:
-            hits, meta = jobs["encoded"].result()
+            hits, meta = _safe(jobs["encoded"], timing)
             timing["encoded"] = _ms(t)
             model = model or meta.get("model")
             if hits and (decision is None or decision.action == "allow"):
@@ -143,7 +182,7 @@ def run(
                 )
                 decision = policy().decide(msg, [f])
         if "single" in jobs:
-            more, meta = jobs["single"].result()
+            more, meta = _safe(jobs["single"], timing)
             timing["tier1"] = _ms(t)
             model = model or meta.get("model")
             if decision is None or decision.action == "allow":

@@ -67,6 +67,40 @@ A hit on folded text removes the whole message and posts a notice instead of a m
 
 On GCP, `src/blackline/jobqueue.py` is the one file to swap for Pub/Sub with an ordering key.
 
+## Production
+
+**Run it**
+
+```bash
+make check-policy     # the policy file is valid
+make evals            # moderation coverage, rules only, no network
+make up               # docker compose: container + volume for the queue and audit log
+make health           # {"status": "ok", "slack_connected": true, ...}
+```
+
+Deploy to GCP with one command, run by someone with gcloud access: `PROJECT=<id> ./deploy/gce.sh`. It builds the image with Cloud Build, then runs it on an always-on e2-small VM with a persistent disk. A VM rather than Cloud Run, because Socket Mode needs one process that stays connected and the SQLite queue needs a disk that survives restarts. `./deploy/gce.sh update` ships a new image to the same VM.
+
+**What makes it safe to run**
+
+| Concern | How it is handled |
+|---|---|
+| Sensitive data at rest | The queue wipes message text when a job finishes or dies. The audit log stores an HMAC fingerprint, never text. Set `AUDIT_HMAC_KEY`. |
+| Bad configuration | The app refuses to start with missing or swapped tokens, or an invalid policy. Every policy error is listed with its location. |
+| Policy changes | Edits to the policy file apply within 2 seconds, no restart. An invalid edit is rejected and logged, and the previous policy stays. |
+| Model outage | Model checks time out after 15 s. On failure the rules still run, and `timing_ms.model_error` counts it. |
+| Crashes and deploys | SIGTERM stops new events, lets workers finish their job, and exits. Unfinished jobs resume on start. |
+| Health | `GET /healthz` returns 503 when Slack is disconnected or 50+ jobs have failed. The container has a HEALTHCHECK. |
+| Logs | `LOG_FORMAT=json` gives one JSON object per line, which Cloud Logging parses. |
+| Container | Runs as an unprivileged user. Only `/data` is writable state. |
+| Coverage | `evals/cases.yaml` holds labelled cases, including known gaps. CI fails if a case regresses or a known gap is quietly fixed. |
+
+**Before real customer data**
+
+- Move tokens from VM metadata to Secret Manager.
+- Replace the SQLite queue with Pub/Sub for more than one instance.
+- Distribute the Slack app with OAuth so each workspace installs it, instead of one owner token.
+- Get a privacy review of the audit log retention period.
+
 ## Run
 
 ```bash

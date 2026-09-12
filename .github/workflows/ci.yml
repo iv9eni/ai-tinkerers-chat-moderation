@@ -8,4 +8,14 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: uv sync --extra dev
       - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - name: policy file is valid
+        run: uv run python -c "from blackline.policy import Policy; Policy.load()"
       - run: uv run pytest -q
+      - name: moderation coverage
+        run: uv run python evals/run.py
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t blackline:ci .

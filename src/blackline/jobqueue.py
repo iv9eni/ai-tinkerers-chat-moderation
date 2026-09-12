@@ -153,7 +153,8 @@ class JobQueue:
     def done(self, job: Job) -> None:
         with self._cv:
             self.db.execute(
-                "UPDATE jobs SET status = 'done', finished_at = ?, error = NULL WHERE id = ?",
+                "UPDATE jobs SET status = 'done', finished_at = ?, error = NULL, payload = '{}'"
+                " WHERE id = ?",
                 (time.time(), job.id),
             )
 
@@ -168,6 +169,10 @@ class JobQueue:
                 " WHERE id = ?",
                 (status, now + delay, error[:500], now if status == "dead" else None, job.id),
             )
+            if status == "dead":
+                # the message is still in Slack, so the job can be replayed by timestamp;
+                # the queue itself keeps no message text
+                self.db.execute("UPDATE jobs SET payload = '{}' WHERE id = ?", (job.id,))
             self._cv.notify_all()
         return status
 
@@ -203,6 +208,14 @@ class JobQueue:
     def cursors(self) -> list[tuple[str, str]]:
         with self._cv:
             return self.db.execute("SELECT key, last_ts FROM cursors").fetchall()
+
+    def scrub_finished(self) -> int:
+        """Wipe payloads of finished jobs written before scrubbing existed."""
+        with self._cv:
+            cur = self.db.execute(
+                "UPDATE jobs SET payload = '{}' WHERE status IN ('done', 'dead') AND payload != '{}'"
+            )
+            return cur.rowcount
 
     def prune(self, older_than_s: float = 86400) -> int:
         with self._cv:

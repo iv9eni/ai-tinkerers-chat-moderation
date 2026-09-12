@@ -1,0 +1,250 @@
+# Blackline moderation cases. Every change runs the rule cases in CI.
+# expect: removed (mask, block, or quarantine) | warn | allow
+# known_gap: a case we know we miss today. It is expected to fail; if it starts
+#   passing, the test suite says so and the gap should be removed from this file.
+# needs_model: only runs with `make evals-model`, which spends OpenRouter credits.
+- id: card-plain
+  category: card
+  text: customer card is 4532 0151 1283 0366 exp 09/27
+  expect: removed
+- id: card-test-visa
+  category: card
+  text: use 4111 1111 1111 1111 for staging
+  expect: removed
+- id: card-dashes
+  category: card
+  text: cc 5412-7512-3412-3456 declined
+  expect: removed
+- id: card-dots
+  category: card
+  text: 4111.1111.1111.1111
+  expect: removed
+- id: card-amex
+  category: card
+  text: amex 3714 496353 98431
+  expect: removed
+- id: card-in-url
+  category: card
+  text: pay https://shop.example/checkout?card=4111111111111111&exp=0927
+  expect: removed
+- id: card-in-code
+  category: card
+  text: '```4111 1111 1111 1111```'
+  expect: removed
+- id: split-2
+  category: split
+  messages:
+  - card first digits 4532 second digits 0151
+  - card second digits 1283 0366
+  expect: removed
+- id: split-4
+  category: split
+  messages:
+  - ok the card
+  - '4532'
+  - '0151'
+  - 1283 0366
+  expect: removed
+- id: split-sin
+  category: split
+  messages:
+  - new hire SIN starts 130
+  - then 692 544
+  expect: removed
+- id: split-two-authors
+  category: split
+  messages:
+  - card 4532 0151
+  - 1283 0366
+  different_authors: true
+  expect: removed
+  known_gap: two people each post half
+- id: emoji-shortcodes
+  category: disguise
+  text: ':four::one::one::one: :one::one::one::one: :one::one::one::one: :one::one::one::one:'
+  expect: removed
+- id: keycap-unicode
+  category: disguise
+  text: 4️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣1️⃣
+  expect: removed
+- id: fullwidth
+  category: disguise
+  text: ４１１１ １１１１ １１１１ １１１１
+  expect: removed
+- id: arabic-indic
+  category: disguise
+  text: ٤١١١ ١١١١ ١١١١ ١١١١
+  expect: removed
+- id: math-bold
+  category: disguise
+  text: 𝟒𝟏𝟏𝟏 𝟏𝟏𝟏𝟏 𝟏𝟏𝟏𝟏 𝟏𝟏𝟏𝟏
+  expect: removed
+- id: circled
+  category: disguise
+  text: ④①①① ①①①① ①①①① ①①①①
+  expect: removed
+- id: zero-width
+  category: disguise
+  text: 4​111 1111‍ 1111 ⁠1111
+  expect: removed
+- id: words-en
+  category: disguise
+  text: four one one one one one one one one one one one one one one one
+  expect: removed
+- id: words-fr
+  category: disguise
+  text: carte quatre un un un un un un un un un un un un un un un
+  expect: removed
+- id: words-es
+  category: disguise
+  text: tarjeta cuatro uno uno uno uno uno uno uno uno uno uno uno uno uno uno uno
+  expect: removed
+- id: leet
+  category: disguise
+  text: 4lll llll llll llll
+  expect: removed
+- id: filler-valid
+  category: disguise
+  text: 4111 xxx 1111 vv 1111 nn 1111
+  expect: removed
+- id: filler-card-like
+  category: disguise
+  text: 1234 xxx 2345 vv 6787 nn 5678
+  expect: removed
+- id: card-like-with-word
+  category: disguise
+  text: my card is 1234 5678 9012 3456
+  expect: removed
+- id: reversed
+  category: disguise
+  text: backwards 1111111111111114
+  expect: removed
+  known_gap: digits written in reverse
+- id: base64
+  category: disguise
+  text: card NDExMTExMTExMTExMTExMQ==
+  expect: removed
+  known_gap: base64-encoded number
+- id: riddle
+  category: disguise
+  text: card starts with the year the Leafs last won the cup, then 1111 1111 1111
+  expect: removed
+  known_gap: number described in a riddle
+- id: sin-plain
+  category: id
+  text: her SIN is 130 692 544
+  expect: removed
+- id: ssn
+  category: id
+  text: ssn 123-45-6789 for the W-2
+  expect: removed
+- id: iban
+  category: id
+  text: wire to DE89 3704 0044 0532 0130 00
+  expect: removed
+- id: aws-key
+  category: secret
+  text: prod key AKIAIOSFODNN7EXAMPLE
+  expect: removed
+- id: github-token
+  category: secret
+  text: token ghp_aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY2zA4
+  expect: removed
+- id: slack-token
+  category: secret
+  text: xoxb-2931850316-8374625190-Zq8LmN3pR5tV7xB9dF1hJ3kP
+  expect: removed
+- id: openai-style-key
+  category: secret
+  text: OPENAI_API_KEY=sk-proj-7fQ2xL9mB4vR8tK1nZ6pW3yH5cJ0dG2s
+  expect: removed
+- id: google-key
+  category: secret
+  text: maps key AIzaSyD4x7Q9mL2vB8nR5tK1pZ6wH3cJ0fG2sAb
+  expect: removed
+- id: neg-luhn-fail
+  category: clean
+  text: 'order #4532015112830367 shipped'
+  expect: allow
+- id: neg-masked-card
+  category: clean
+  text: the card ending 4111 xxxx xxxx 1111 was refunded
+  expect: allow
+- id: neg-invoices
+  category: clean
+  text: invoices 1001 1002 1003 1004 are paid
+  expect: allow
+- id: neg-business-phone
+  category: clean
+  text: call the office at 1-800-555-0199 if the door is locked
+  expect: allow
+- id: neg-time-room
+  category: clean
+  text: standup at 10:15 in room 4
+  expect: allow
+- id: neg-short-run
+  category: clean
+  text: ship 4111 units by Friday
+  expect: allow
+- id: neg-ups-tracking
+  category: clean
+  text: tracking 1Z999AA10123456784 says delivered
+  expect: allow
+- id: neg-prose-numbers
+  category: clean
+  text: we shipped four features and one fix in two sprints
+  expect: allow
+- id: neg-years
+  category: clean
+  text: we moved from 2019 to 2024 and then to 2025
+  expect: allow
+- id: neg-sin-mention
+  category: clean
+  text: my SIN is on file with HR, ask them
+  expect: allow
+- id: neg-french-prose
+  category: clean
+  text: une question sur les deux projets
+  expect: allow
+- id: model-address-3p
+  category: personal
+  text: her home address is 12 Elm St, Guelph
+  expect: removed
+  needs_model: true
+- id: model-own-email
+  category: personal
+  text: my email is me@example.com
+  expect: allow
+  needs_model: true
+- id: model-phone-3p
+  category: personal
+  text: call Priya Shah at 519-555-0142 about her claim
+  expect: warn
+  needs_model: true
+- id: model-health
+  category: personal
+  text: Priya is off for chemo until March, don't tell the team
+  expect: removed
+  needs_model: true
+- id: model-custom-emoji
+  category: disguise
+  text: ':num_four::num_one::num_one::num_one::num_one::num_one::num_one::num_one::num_one::num_one::num_one::num_one::num_one::num_one::num_one::num_one:'
+  expect: removed
+  needs_model: true
+- id: model-german
+  category: disguise
+  text: karte vier eins eins eins eins eins eins eins eins eins eins eins eins eins eins eins
+  expect: removed
+  needs_model: true
+- id: model-out-of-order
+  category: split
+  messages:
+  - last four are 0366
+  - first twelve 4532 0151 1283
+  expect: removed
+  needs_model: true
+- id: model-public-figure
+  category: clean
+  text: Tim Cook announced the new iPhone
+  expect: allow
+  needs_model: true

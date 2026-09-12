@@ -4,10 +4,94 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from blackline.contract import Decision, Finding, Message
+from blackline.contract import Action, Decision, Entity, Finding, Message
+
+Trigger = Literal["never", "on_uncertain", "always"]
+
+
+class PolicyError(ValueError):
+    """The policy file is invalid. The message lists every problem found."""
+
+
+class RuleSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # a misspelled key is an error, not ignored
+    id: str = ""
+    entity: Entity
+    action: Action
+    subject: Literal["self", "third_party", "public", "unknown"] | None = None
+    min_confidence: float | None = Field(default=None, ge=0, le=1)
+    only_with_guests: bool = False
+    message: str = ""
+    source_url: str | None = None
+    notify: list[str] | None = None
+    review_channel: str | None = None
+    mask: dict | None = None
+
+
+class ChannelSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tier1_trigger: Trigger | None = None
+    overrides: list[RuleSpec] = []
+    hold: bool = False
+    risk: Literal["low", "normal", "high"] | None = None
+
+
+class DefaultsSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tier1_trigger: Trigger = "on_uncertain"
+    confidence_threshold: float = Field(default=0.85, ge=0, le=1)
+    subject_policy: dict[Literal["self", "third_party", "public"], str] = {}
+    tier1_model: str | None = None
+    tier2_model: str | None = None
+
+
+class PolicySpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: int = 1
+    workspace: str = ""
+    defaults: DefaultsSpec = DefaultsSpec()
+    rules: list[RuleSpec]
+    channels: dict[str, ChannelSpec] = {}
+    media: dict | None = None
+
+    @field_validator("channels")
+    @classmethod
+    def _channel_names(cls, v: dict) -> dict:
+        bad = [k for k in v if not k.startswith("#")]
+        if bad:
+            raise ValueError(f"channel names must start with #: {bad}")
+        return v
+
+    @field_validator("rules")
+    @classmethod
+    def _unique_ids(cls, v: list[RuleSpec]) -> list[RuleSpec]:
+        ids = [r.id for r in v if r.id]
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        if dupes:
+            raise ValueError(f"duplicate rule ids: {dupes}")
+        return v
+
+
+def validate(raw: object, source: str = "policy") -> dict:
+    if not isinstance(raw, dict):
+        raise PolicyError(f"{source}: expected a mapping at the top level")
+    try:
+        PolicySpec.model_validate(raw)
+    except ValidationError as e:
+        problems = [
+            f"{'.'.join(str(p) for p in err['loc']) or 'policy'}: {err['msg']}"
+            for err in e.errors()
+        ]
+        raise PolicyError(
+            f"{source} has {len(problems)} problem(s): " + "; ".join(problems)
+        ) from None
+    return raw
+
 
 ORDER = ["quarantine", "block", "mask", "warn", "log", "allow"]
 
@@ -22,7 +106,11 @@ class Policy:
     @classmethod
     def load(cls, path: str | None = None) -> Policy:
         p = Path(path or os.environ.get("POLICY_FILE", "policies/default.yaml"))
-        return cls(yaml.safe_load(p.read_text()))
+        try:
+            raw = yaml.safe_load(p.read_text())
+        except (OSError, yaml.YAMLError) as e:
+            raise PolicyError(f"{p}: {e}") from None
+        return cls(validate(raw, str(p)))
 
     def channel_cfg(self, msg: Message) -> dict:
         return self.channels.get(f"#{msg.channel_name}", {})

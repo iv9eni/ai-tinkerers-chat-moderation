@@ -1,0 +1,19 @@
+# Local or single-VM run: docker compose up -d --build
+services:
+  blackline:
+    build: .
+    image: blackline:latest
+    env_file: .env
+    environment:
+      QUEUE_DB: /data/blackline.db
+      AUDIT_FILE: /data/audit.jsonl
+      LOG_FORMAT: json
+    volumes:
+      - blackline-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+volumes:
+  blackline-data:
