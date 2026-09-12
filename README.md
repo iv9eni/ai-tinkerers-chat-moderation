@@ -1,6 +1,6 @@
 # Blackline
 
-Governance agent for Slack. Finds card numbers, SINs, secrets, and other people's personal data in messages, then masks, blocks, or quarantines them before anyone else reads them. Text first, voice notes and images through the same pipeline.
+Governance agent for Slack. Finds card numbers, SINs, secrets, and other people's personal data in messages, then masks, blocks, or quarantines them before anyone else reads them. Text only for the MVP. Voice and images are a later converter in front of the same pipeline.
 
 Built at AI Tinkerers "Agents, Everywhere" (OpenAI), September 12, 2026.
 

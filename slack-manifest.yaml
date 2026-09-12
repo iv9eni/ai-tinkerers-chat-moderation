@@ -15,7 +15,6 @@ oauth_config:
       - chat:write
       - chat:write.customize
       - users:read
-      - files:read
       - channels:read
       - groups:read
     user:
@@ -27,6 +26,5 @@ settings:
       - message.groups
       - message.im
       - message.mpim
-      - file_shared
   socket_mode_enabled: true
   token_rotation_enabled: false
