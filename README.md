@@ -94,6 +94,7 @@ Deploy to GCP, run by someone with gcloud access: first `PROJECT=<id> ./deploy/s
 | Concern | How it is handled |
 |---|---|
 | Sensitive data at rest | The queue wipes message text when a job finishes or dies. The audit log stores an HMAC fingerprint, never text. Set `AUDIT_HMAC_KEY`. |
+| Leaked credentials | GitHub secret scanning is on. The fake keys in `evals/cases.yaml` and `tests/` are excluded in `.github/secret_scanning.yml`. `.env`, the queue database, and the audit log are gitignored and were never committed. |
 | Tokens | Read from Secret Manager when `SECRETS_PROJECT` is set, otherwise from `.env`. `deploy/secrets.sh` uploads and rotates them. |
 | Bad configuration | The app refuses to start with missing or swapped tokens, or an invalid policy. Every policy error is listed with its location. |
 | Policy changes | Edits to the policy file apply within 2 seconds, no restart. An invalid edit is rejected and logged, and the previous policy stays. |
