@@ -1,4 +1,4 @@
-.PHONY: setup run test lint data replay queue evals evals-model check-policy docker up down logs health
+.PHONY: setup run test lint data replay queue token-dashboard evals evals-model check-policy docker up down logs health
 
 setup:        ; uv sync --extra dev && cp -n .env.example .env || true
 run:          ; uv run python -m adapters.slack_app
@@ -7,6 +7,7 @@ lint:         ; uv run ruff check . && uv run ruff format --check .
 data:         ; uv run python data/generate.py
 replay:       ; uv run python scripts/replay.py data/demo_messages.json
 queue:        ; uv run python scripts/queue_status.py
+token-dashboard: ; uv run python scripts/token_dashboard.py
 evals:        ; uv run python evals/run.py
 evals-model:  ; uv run python evals/run.py --model
 check-policy: ; uv run python -c "from blackline.policy import Policy; Policy.load(); print('policy ok')"
