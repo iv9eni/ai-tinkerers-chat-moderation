@@ -16,18 +16,18 @@ def msg(channel="eng", guests=False):
     )
 
 
-def test_card_blocks():
+def test_card_masks():
     f = Finding(entity="CREDIT_CARD", start=0, end=16, confidence=0.97, tier=0)
-    assert policy.decide(msg(), [f]).action == "block"
+    assert policy.decide(msg(), [f]).action == "mask"
 
 
-def test_card_and_sin_blocks():
+def test_sin_blocks_over_card():
     fs = [
         Finding(entity="CREDIT_CARD", start=0, end=16, confidence=0.97, tier=0),
         Finding(entity="CA_SIN", start=20, end=29, confidence=0.9, tier=0),
     ]
     d = policy.decide(msg(), fs)
-    assert d.action == "block"
+    assert d.action == "block" and d.rule_id == "pipeda.sin.default"
 
 
 def test_self_email_allowed():
