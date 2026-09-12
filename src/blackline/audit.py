@@ -54,6 +54,7 @@ def record(msg: Message, decision: Decision) -> dict:
         "related": len(decision.related_ids),
         "timing_ms": decision.timing_ms,
         "model": decision.model,
+        "token_usage": decision.token_usage,
         "cost_usd": decision.cost_usd,
     }
     line = json.dumps(row)

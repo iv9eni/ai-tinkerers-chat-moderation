@@ -67,4 +67,5 @@ class Decision(BaseModel):
     related_ids: list[str] = Field(default_factory=list)
     timing_ms: dict[str, int | None] = Field(default_factory=dict)
     model: str | None = None
+    token_usage: dict[str, int] = Field(default_factory=dict)
     cost_usd: float | None = None

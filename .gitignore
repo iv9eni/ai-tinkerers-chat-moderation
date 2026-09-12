@@ -10,3 +10,4 @@ data/holdout.json
 blackline.db
 blackline.db-*
 blackline.*.log
+reports/

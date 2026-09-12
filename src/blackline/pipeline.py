@@ -69,6 +69,15 @@ def _ms(t: float) -> int:
     return int((time.perf_counter() - t) * 1000)
 
 
+def _add_usage(total: dict[str, int], usage: dict | None) -> None:
+    if not usage:
+        return
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+
+
 def _split_decision(
     msg: Message, chain: list[Message], entity: str, idx: list[int], conf: float, tier: int
 ) -> Decision:
@@ -125,6 +134,7 @@ def run(
     timing: dict[str, int | None] = {"tier0": None, "split": None, "tier1": None, "window": None}
     timing["encoded"] = None
     model = None
+    token_usage: dict[str, int] = {}
     text = msg.text
 
     # 1. rules on this message alone
@@ -163,6 +173,7 @@ def run(
             hits, meta = _safe(jobs["window"], timing)
             timing["window"] = _ms(t)
             model = meta.get("model")
+            _add_usage(token_usage, meta.get("usage"))
             if hits:
                 entity, idx, conf = hits[0]
                 decision = _split_decision(msg, chain, entity, idx, conf, 1)
@@ -170,6 +181,7 @@ def run(
             hits, meta = _safe(jobs["encoded"], timing)
             timing["encoded"] = _ms(t)
             model = model or meta.get("model")
+            _add_usage(token_usage, meta.get("usage"))
             if hits and (decision is None or decision.action == "allow"):
                 entity, conf = hits[0]
                 f = Finding(
@@ -185,6 +197,7 @@ def run(
             more, meta = _safe(jobs["single"], timing)
             timing["tier1"] = _ms(t)
             model = model or meta.get("model")
+            _add_usage(token_usage, meta.get("usage"))
             if decision is None or decision.action == "allow":
                 findings += more
                 decision = policy().decide(msg, findings)
@@ -192,6 +205,7 @@ def run(
     decision = decision or policy().decide(msg, findings)
     decision.timing_ms = timing
     decision.model = model
+    decision.token_usage = token_usage
     if audit_log:
         audit.record(msg, decision)
     return decision
