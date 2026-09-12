@@ -24,7 +24,7 @@ import signal
 import sys
 import threading
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, find_dotenv, load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
@@ -74,21 +74,31 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(out)
 
 
-def setup_logging() -> None:
+def setup_logging(fmt: str | None = None) -> None:
     handler = logging.StreamHandler()
-    if os.environ.get("LOG_FORMAT") == "json":
+    if (fmt or os.environ.get("LOG_FORMAT")) == "json":
         handler.setFormatter(JsonFormatter())
     else:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), handlers=[handler], force=True)
 
 
-def main() -> None:
-    load_dotenv()
-    setup_logging()
+def load_config(env_path: str, file_values: dict, client=None) -> list[str]:
+    """Shell environment first, then Secret Manager, then the .env file.
+    Secrets load before .env, and load_dotenv never overrides a variable that is set."""
+    project = os.environ.get("SECRETS_PROJECT") or file_values.get("SECRETS_PROJECT") or ""
+    loaded = secrets.load(project, client=client)
+    if env_path:
+        load_dotenv(env_path)
+    return loaded
 
+
+def main() -> None:
+    env_path = find_dotenv(usecwd=True)
+    file_values = dotenv_values(env_path) if env_path else {}
+    setup_logging(os.environ.get("LOG_FORMAT") or file_values.get("LOG_FORMAT"))
     try:
-        loaded = secrets.load()
+        loaded = load_config(env_path, file_values)
     except secrets.SecretsError as e:
         log.error("cannot start: %s", e)
         sys.exit(2)
