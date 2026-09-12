@@ -1,0 +1,32 @@
+display_information:
+  name: Blackline
+  description: Governance agent that masks or blocks sensitive data in messages.
+features:
+  bot_user:
+    display_name: Blackline
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - chat:write
+      - chat:write.customize
+      - users:read
+      - files:read
+      - channels:read
+      - groups:read
+    user:
+      - chat:write
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+      - file_shared
+  socket_mode_enabled: true
+  token_rotation_enabled: false

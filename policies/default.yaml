@@ -1,0 +1,85 @@
+version: 1
+workspace: demo
+defaults:
+  tier1_trigger: on_uncertain      # never | on_uncertain | always
+  confidence_threshold: 0.85
+  subject_policy:
+    self: allow
+    third_party: enforce
+    public: allow
+
+rules:
+  - id: pci.card.default
+    entity: CREDIT_CARD
+    action: mask
+    source_url: https://www.pcisecuritystandards.org/
+    message: "Card numbers can't be shared here (PCI DSS requirement 3)."
+
+  - id: pipeda.sin.default
+    entity: CA_SIN
+    action: block
+    source_url: https://www.priv.gc.ca/en/privacy-topics/sins/
+    message: "Social Insurance Numbers are never allowed in chat (PIPEDA)."
+
+  - id: us.ssn.default
+    entity: US_SSN
+    action: block
+    message: "Social Security Numbers are never allowed in chat."
+
+  - id: secrets.default
+    entity: API_KEY
+    action: block
+    message: "That looks like a live credential. Rotate it and use the password manager."
+
+  - id: bank.iban.default
+    entity: IBAN
+    action: mask
+    message: "Bank account numbers are masked."
+
+  - id: gdpr.special.default
+    entity: SPECIAL_CATEGORY
+    action: quarantine
+    message: "Health, religion, or similar data was moved to governance review (GDPR Art. 9)."
+
+  - id: gdpr.health.default
+    entity: HEALTH
+    action: quarantine
+    message: "Health information was moved to governance review."
+
+  - id: pii.address.third_party
+    entity: ADDRESS
+    subject: third_party
+    action: mask
+    message: "Another person's home address was masked."
+
+  - id: pii.phone.third_party
+    entity: PHONE
+    subject: third_party
+    action: warn
+    message: "Sharing someone else's phone number. Ask before you post it."
+
+  - id: pii.email.third_party
+    entity: EMAIL
+    subject: third_party
+    action: warn
+    message: "Sharing someone else's email. Ask before you post it."
+
+  - id: pii.dob.third_party
+    entity: DATE_OF_BIRTH
+    subject: third_party
+    action: mask
+    message: "Another person's date of birth was masked."
+
+channels:
+  "#support":
+    tier1_trigger: always
+  "#recruiting":
+    overrides:
+      - entity: PHONE
+        subject: third_party
+        action: log
+      - entity: EMAIL
+        subject: third_party
+        action: log
+  "#random":
+    tier1_trigger: never
