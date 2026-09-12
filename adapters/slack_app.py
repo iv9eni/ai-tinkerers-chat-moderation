@@ -8,6 +8,7 @@ Two lanes of worker threads:
   deep    model checks, its own threads, so a slow call never delays a delete
 
 Production behaviour:
+  - reads tokens from Secret Manager when SECRETS_PROJECT is set
   - refuses to start with missing or wrong-looking tokens, or an invalid policy
   - GET /healthz on $PORT for the hosting platform
   - SIGTERM or Ctrl+C: stop taking new events, let workers finish their current job, exit
@@ -30,7 +31,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from adapters.health import Health
 from adapters.slack_http import KeepAliveSlack
 from adapters.slack_worker import DEEP, TRIAGE, Worker
-from blackline import pipeline
+from blackline import pipeline, secrets
 from blackline.jobqueue import JobQueue
 from blackline.policy import PolicyError
 
@@ -85,6 +86,14 @@ def setup_logging() -> None:
 def main() -> None:
     load_dotenv()
     setup_logging()
+
+    try:
+        loaded = secrets.load()
+    except secrets.SecretsError as e:
+        log.error("cannot start: %s", e)
+        sys.exit(2)
+    if loaded:
+        log.info("loaded %s from Secret Manager", ", ".join(loaded))
 
     problems = check_env()
     if problems:

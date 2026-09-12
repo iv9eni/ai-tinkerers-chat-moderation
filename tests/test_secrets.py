@@ -1,0 +1,69 @@
+import pytest
+
+from blackline import secrets
+
+
+class Payload:
+    def __init__(self, data):
+        self.data = data
+
+
+class Resp:
+    def __init__(self, value):
+        self.payload = Payload(value.encode())
+
+
+class FakeSecretManager:
+    def __init__(self, store, deny=()):
+        self.store, self.deny, self.asked = store, set(deny), []
+
+    def access_secret_version(self, request):
+        name = request["name"].split("/")[3]
+        self.asked.append(request["name"])
+        if name in self.deny:
+            raise PermissionError("denied")
+        if name not in self.store:
+            raise LookupError("not found")
+        return Resp(self.store[name])
+
+
+NAMES = ("SLACK_BOT_TOKEN", "AUDIT_HMAC_KEY")
+
+
+@pytest.fixture(autouse=True)
+def clean_env(monkeypatch):
+    for n in NAMES:
+        monkeypatch.delenv(n, raising=False)
+    monkeypatch.delenv("SECRETS_PROJECT", raising=False)
+
+
+def test_no_project_means_no_calls():
+    fake = FakeSecretManager({})
+    assert secrets.load(client=fake, names=NAMES) == []
+    assert fake.asked == []
+
+
+def test_fills_missing_values_from_the_latest_version(monkeypatch):
+    fake = FakeSecretManager({"SLACK_BOT_TOKEN": "xoxb-secret", "AUDIT_HMAC_KEY": "k"})
+    assert secrets.load("backline-508417", fake, NAMES) == list(NAMES)
+    import os
+
+    assert os.environ["SLACK_BOT_TOKEN"] == "xoxb-secret"
+    assert fake.asked[0] == "projects/backline-508417/secrets/SLACK_BOT_TOKEN/versions/latest"
+
+
+def test_existing_environment_variable_wins(monkeypatch):
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-local")
+    fake = FakeSecretManager({"SLACK_BOT_TOKEN": "xoxb-remote", "AUDIT_HMAC_KEY": "k"})
+    assert secrets.load("p", fake, NAMES) == ["AUDIT_HMAC_KEY"]
+    import os
+
+    assert os.environ["SLACK_BOT_TOKEN"] == "xoxb-local"
+
+
+def test_errors_name_the_secret_but_never_the_value():
+    fake = FakeSecretManager({"SLACK_BOT_TOKEN": "xoxb-very-secret"}, deny={"AUDIT_HMAC_KEY"})
+    with pytest.raises(secrets.SecretsError) as e:
+        secrets.load("p", fake, NAMES)
+    assert "AUDIT_HMAC_KEY: PermissionError" in str(e.value)
+    assert "xoxb-very-secret" not in str(e.value)
