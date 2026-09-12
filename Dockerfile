@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir uv \
 # dependencies first so code changes do not reinstall them
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN uv pip install --system --no-cache .
+RUN uv pip install --system --no-cache ".[gcp]"
 
 COPY adapters ./adapters
 COPY policies ./policies

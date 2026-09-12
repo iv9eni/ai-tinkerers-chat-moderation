@@ -86,13 +86,14 @@ make up               # docker compose: container + volume for the queue and aud
 make health           # {"status": "ok", "slack_connected": true, ...}
 ```
 
-Deploy to GCP with one command, run by someone with gcloud access: `PROJECT=<id> ./deploy/gce.sh`. It builds the image with Cloud Build, then runs it on an always-on e2-small VM with a persistent disk. A VM rather than Cloud Run, because Socket Mode needs one process that stays connected and the SQLite queue needs a disk that survives restarts. `./deploy/gce.sh update` ships a new image to the same VM.
+Deploy to GCP, run by someone with gcloud access: first `PROJECT=<id> ./deploy/secrets.sh` to copy the tokens from `.env` into Secret Manager, then `PROJECT=<id> ./deploy/gce.sh`. The VM reads tokens from Secret Manager at startup; they are not in its configuration. It builds the image with Cloud Build, then runs it on an always-on e2-small VM with a persistent disk. A VM rather than Cloud Run, because Socket Mode needs one process that stays connected and the SQLite queue needs a disk that survives restarts. `./deploy/gce.sh update` ships a new image to the same VM.
 
 **What makes it safe to run**
 
 | Concern | How it is handled |
 |---|---|
 | Sensitive data at rest | The queue wipes message text when a job finishes or dies. The audit log stores an HMAC fingerprint, never text. Set `AUDIT_HMAC_KEY`. |
+| Tokens | Read from Secret Manager when `SECRETS_PROJECT` is set, otherwise from `.env`. `deploy/secrets.sh` uploads and rotates them. |
 | Bad configuration | The app refuses to start with missing or swapped tokens, or an invalid policy. Every policy error is listed with its location. |
 | Policy changes | Edits to the policy file apply within 2 seconds, no restart. An invalid edit is rejected and logged, and the previous policy stays. |
 | Model outage | Model checks time out after 15 s. On failure the rules still run, and `timing_ms.model_error` counts it. |
@@ -104,7 +105,6 @@ Deploy to GCP with one command, run by someone with gcloud access: `PROJECT=<id>
 
 **Before real customer data**
 
-- Move tokens from VM metadata to Secret Manager.
 - Replace the SQLite queue with Pub/Sub for more than one instance.
 - Distribute the Slack app with OAuth so each workspace installs it, instead of one owner token.
 - Get a privacy review of the audit log retention period.
