@@ -89,6 +89,18 @@ make health           # {"status": "ok", "slack_connected": true, ...}
 
 Deploy to GCP, run by someone with gcloud access: first `PROJECT=<id> ./deploy/secrets.sh` to copy the tokens from `.env` into Secret Manager, then `PROJECT=<id> ./deploy/gce.sh`. The VM reads tokens from Secret Manager at startup; they are not in its configuration. It builds the image with Cloud Build, then runs it on an always-on e2-small VM with a persistent disk. A VM rather than Cloud Run, because Socket Mode needs one process that stays connected and the SQLite queue needs a disk that survives restarts. `./deploy/gce.sh update` ships a new image to the same VM.
 
+The VM runs Container-Optimized OS. `deploy/vm-startup.sh` mounts the persistent disk and starts the image with Docker on every boot, so starting the VM starts the bot. Only one copy may be connected to Slack, so stop the laptop bot first.
+
+```bash
+make gcp-start      # start the VM, the bot connects about a minute later
+make gcp-logs       # app logs from Cloud Logging
+make gcp-health     # /healthz on the VM, over SSH
+make gcp-stop       # stop the VM before testing on a laptop again
+make gcp-deploy     # build the current commit, ship it, restart the VM
+```
+
+Set `GCLOUD=~/path/to/gcloud` if gcloud is not on your PATH.
+
 **What makes it safe to run**
 
 | Concern | How it is handled |
