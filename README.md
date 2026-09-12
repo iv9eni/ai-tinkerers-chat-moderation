@@ -139,7 +139,7 @@ Set `GCLOUD=~/path/to/gcloud` if gcloud is not on your PATH.
 | Bad configuration | The app refuses to start with missing or swapped tokens, or an invalid policy. Every policy error is listed with its location. |
 | Policy changes | Edits to the policy file apply within 2 seconds, no restart. An invalid edit is rejected and logged, and the previous policy stays. |
 | Model outage | Model checks time out after 15 s. On failure the rules still run, and `timing_ms.model_error` counts it. |
-| Token optimization | Obvious findings are removed by rules with `model: null`. `make token-dashboard` turns `audit.jsonl` into a local report showing zero-token decisions, model call rate, estimated tokens avoided, and a configurable CO2e scenario estimate. |
+| Token optimization | Obvious findings are removed by rules with `model: null`. `make token-dashboard` turns `audit.jsonl` into a local report showing zero-token decisions, model call rate, estimated tokens avoided, measured model spend when present, and configurable cost/CO2e scenario estimates. |
 | False-positive recovery | Set `MANAGER_USER_IDS` to show a manager-only restore button on redacted `mask` posts. Originals are held only in memory for `REDACTION_RESTORE_TTL_SECONDS`, never in the durable queue or audit log. |
 | Crashes and deploys | SIGTERM stops new events, lets workers finish their job, and exits. Unfinished jobs resume on start. |
 | Health | `GET /healthz` returns 503 when Slack is disconnected or 50+ jobs have failed. The container has a HEALTHCHECK. |
