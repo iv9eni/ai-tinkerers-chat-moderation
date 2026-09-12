@@ -9,7 +9,7 @@ def test_put_is_idempotent():
     jq = q()
     assert jq.put("C1.1", {"n": 1}, "C1:U1")
     assert not jq.put("C1.1", {"n": 1}, "C1:U1")
-    assert jq.counts() == {"queued": 1}
+    assert jq.counts() == {"triage/queued": 1}
 
 
 def test_claim_in_order_and_done():
@@ -60,3 +60,33 @@ def test_cursor_only_moves_forward():
     jq.advance_cursor("C1", "1789229343.562509")
     jq.advance_cursor("C1", "1789229000.000000")
     assert jq.cursors() == [("C1", "1789229343.562509")]
+
+
+def test_lanes_are_independent():
+    jq = JobQueue(":memory:", partitions={"triage": 1, "deep": 1})
+    jq.put("t1", {"lane": "triage"}, "k", now=0)
+    jq.put("d1", {"lane": "deep"}, "k", now=0, topic="deep")
+    stuck = jq.claim(0, now=0)
+    jq.fail(stuck, "boom", now=0)  # triage head is on backoff
+    assert jq.claim(0, now=0, topic="deep").payload == {"lane": "deep"}
+
+
+def test_old_database_is_migrated(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "old.db")
+    db = sqlite3.connect(path)
+    db.execute(
+        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, dedupe TEXT UNIQUE NOT NULL, partition INTEGER"
+        " NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', stage TEXT NOT"
+        " NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, available_at REAL NOT NULL,"
+        " created_at REAL NOT NULL, claimed_at REAL, finished_at REAL, error TEXT)"
+    )
+    db.execute(
+        "INSERT INTO jobs (dedupe, partition, payload, available_at, created_at)"
+        " VALUES ('old', 0, '{}', 0, 0)"
+    )
+    db.commit()
+    db.close()
+    jq = JobQueue(path, partitions=1)
+    assert jq.claim(0, now=1).dedupe == "old"

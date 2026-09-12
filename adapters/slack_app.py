@@ -1,8 +1,11 @@
 """Slack entry point. Socket Mode, always on.
 
 The listener only writes the event to the durable queue. Slack gets its acknowledgement
-after the write, so a crash at any point after that is recovered on restart. Worker
-threads do the real work, one per partition, so each author's messages stay in order.
+after the write, so a crash at any point after that is recovered on restart.
+
+Two lanes of worker threads:
+  triage  one thread per partition, rules only, deletes first, keeps each author in order
+  deep    model checks, its own threads, so a slow call never delays a delete
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk import WebClient
 
-from adapters.slack_worker import Worker
+from adapters.slack_worker import DEEP, TRIAGE, Worker
 from blackline.jobqueue import JobQueue
 
 log = logging.getLogger("blackline")
@@ -27,7 +30,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     workers = int(os.environ.get("WORKERS", "4"))
-    queue = JobQueue(os.environ.get("QUEUE_DB", "blackline.db"), partitions=workers)
+    deep_workers = int(os.environ.get("DEEP_WORKERS", "8"))
+    queue = JobQueue(
+        os.environ.get("QUEUE_DB", "blackline.db"),
+        partitions={"triage": workers, "deep": deep_workers},
+    )
     worker = Worker(
         WebClient(token=os.environ["SLACK_BOT_TOKEN"]),
         WebClient(token=os.environ["SLACK_USER_TOKEN"]),
@@ -46,14 +53,17 @@ def main() -> None:
         worker.enqueue(event)
 
     stop = threading.Event()
-    for p in range(workers):
-        threading.Thread(
-            target=worker.run_forever, args=(p, stop), name=f"worker-{p}", daemon=True
-        ).start()
+    for topic, n in ((TRIAGE, workers), (DEEP, deep_workers)):
+        for p in range(n):
+            threading.Thread(
+                target=worker.run_forever, args=(topic, p, stop), name=f"{topic}-{p}", daemon=True
+            ).start()
 
     log.info(
-        "Blackline listening via Socket Mode. workers=%d recovered=%d caught_up=%d pruned=%d queue=%s",
+        "Blackline listening via Socket Mode. triage=%d deep=%d recovered=%d caught_up=%d"
+        " pruned=%d queue=%s",
         workers,
+        deep_workers,
         requeued,
         missed,
         pruned,

@@ -1,11 +1,17 @@
-"""Processes queued Slack events. Delete first, think later.
+"""Two-lane pipeline for Slack messages. Delete first, think later.
 
-Order of work for one message:
-  1. rules only on the text and the author's recent messages, no network
-  2. if that removes the message: delete now, then notify
-  3. otherwise: channel lookup, model checks, then act
+triage lane  ordered per author, rules only, no model
+    rule hit        delete now, notify, done
+    hold channel    delete every message now, then send it to the deep lane
+    otherwise       send to the deep lane
+deep lane    any order, model checks, may take a second
+    hit             delete (or keep a held message deleted), post a masked copy or notice
+    clean and held  release: repost the message under the author's name
+    clean           nothing
+
+A slow model call never delays a delete, because the deep lane has its own workers.
 Every side effect is recorded as a stage on the job, so a retry after a crash never
-deletes twice or posts the notice twice.
+deletes, posts, or releases twice.
 """
 
 from __future__ import annotations
@@ -25,6 +31,12 @@ from blackline.window import ConversationWindow
 
 log = logging.getLogger("blackline")
 REMOVING = pipeline.REMOVING
+TRIAGE, DEEP = "triage", "deep"
+STAGES = ["", "held", "deleted", "released", "reposted", "notified"]
+
+
+def reached(job: Job, stage: str) -> bool:
+    return STAGES.index(job.stage or "") >= STAGES.index(stage)
 
 
 def human_event(event: dict) -> dict | None:
@@ -45,6 +57,14 @@ def dedupe_key(ev: dict) -> str:
     return f"{base}.e{edited}" if edited else base
 
 
+def posted_at(ev: dict) -> float:
+    return float((ev.get("edited") or {}).get("ts") or ev["ts"])
+
+
+def ms_since(t: float) -> int:
+    return int((time.time() - t) * 1000)
+
+
 class Worker:
     def __init__(
         self,
@@ -57,7 +77,9 @@ class Worker:
         self.user = user
         self.queue = queue
         self.window = window or ConversationWindow()
-        self._channels: dict[str, dict] = {}
+        self._names: dict[str, str] = {}
+        self._guests: dict[str, bool] = {}
+        self._people: dict[str, dict] = {}
 
     # ---- intake (runs inside the Slack listener, must be fast) ----------------------
 
@@ -67,88 +89,147 @@ class Worker:
             return False
         payload = {"event": ev, "received_at": received_at or time.time()}
         return self.queue.put(
-            dedupe_key(ev), payload, partition_key=f"{ev['channel']}:{ev['user']}"
+            dedupe_key(ev), payload, partition_key=f"{ev['channel']}:{ev['user']}", topic=TRIAGE
         )
 
-    # ---- Slack lookups ---------------------------------------------------------------
+    # ---- Slack lookups, cached ------------------------------------------------------
 
-    def channel(self, channel_id: str, lookup: bool) -> dict:
-        if channel_id in self._channels or not lookup:
-            return self._channels.get(channel_id, {"name": "", "guests": False})
-        try:
-            info = self.bot.conversations_info(channel=channel_id)["channel"]
-            members = self.bot.conversations_members(channel=channel_id)["members"]
-            guests = any(
-                self.bot.users_info(user=u)["user"].get("is_restricted") for u in members[:50]
-            )
-            result = {"name": info.get("name", ""), "guests": guests}
-        except SlackApiError:
-            result = {"name": "", "guests": False}
-        self._channels[channel_id] = result
-        return result
+    def channel_name(self, cid: str) -> str:
+        if cid not in self._names:
+            try:
+                self._names[cid] = self.bot.conversations_info(channel=cid)["channel"].get(
+                    "name", ""
+                )
+            except SlackApiError:
+                self._names[cid] = ""
+        return self._names[cid]
 
-    def to_message(self, ev: dict, lookup: bool) -> Message:
-        ch = self.channel(ev["channel"], lookup)
+    def channel_guests(self, cid: str) -> bool:
+        if cid not in self._guests:
+            try:
+                members = self.bot.conversations_members(channel=cid)["members"]
+                self._guests[cid] = any(self.person(u).get("is_restricted") for u in members[:50])
+            except SlackApiError:
+                self._guests[cid] = False
+        return self._guests[cid]
+
+    def person(self, uid: str) -> dict:
+        if uid not in self._people:
+            try:
+                self._people[uid] = self.bot.users_info(user=uid)["user"]
+            except SlackApiError:
+                self._people[uid] = {}
+        return self._people[uid]
+
+    def display_name(self, uid: str) -> str:
+        p = self.person(uid)
+        return (p.get("profile") or {}).get("display_name") or p.get("real_name") or "someone"
+
+    @staticmethod
+    def to_message(ev: dict, name: str = "", guests: bool = False) -> Message:
         return Message(
             id=f"{ev['channel']}.{ev['ts']}",
             channel_id=ev["channel"],
-            channel_name=ch["name"],
-            channel_has_guests=ch["guests"],
+            channel_name=name,
+            channel_has_guests=guests,
             author_id=ev["user"],
             text=ev.get("text", ""),
         )
 
-    def author_name(self, user_id: str) -> str:
-        try:
-            return self.bot.users_info(user=user_id)["user"].get("real_name") or "someone"
-        except SlackApiError:
-            return "someone"
+    # ---- triage lane ----------------------------------------------------------------
 
-    # ---- processing ------------------------------------------------------------------
-
-    def handle(self, job: Job) -> Decision:
+    def triage(self, job: Job) -> Decision | None:
         ev = job.payload["event"]
+        cid = ev["channel"]
         started = time.time()
-        msg = self.to_message(ev, lookup=False)  # cached channel info only, no network
+        msg = self.to_message(ev, name=self._names.get(cid, ""))  # no network before a delete
         earlier = self.window.recent(msg)
 
         t = time.perf_counter()
         decision = pipeline.fast_check(msg, earlier)
-        path = "fast"
-        if decision is None:
-            msg = self.to_message(ev, lookup=True)
-            decision = pipeline.run(msg, window=earlier, audit_log=False)
-            path = "full"
+        if decision is not None:
+            decision.timing_ms["decide"] = int((time.perf_counter() - t) * 1000)
+            decision.timing_ms["queue"] = int((started - job.payload["received_at"]) * 1000)
+            self.remove(job, decision, msg, ev)
+            if decision.action == "warn":
+                self.window.add(msg)
+            self.notify(job, decision, msg, ev)
+            audit.record(msg, decision)
+            self._log("triage", msg, decision)
+            return decision
+
+        msg = msg.model_copy(update={"channel_name": self.channel_name(cid)})
+        hold = bool(pipeline.policy().channel_cfg(msg).get("hold"))
+        exposed = None
+        if hold and not reached(job, "held"):
+            if self.delete(cid, [msg.id]):
+                exposed = ms_since(posted_at(ev))
+                self.queue.set_stage(job, "held")
+            else:
+                hold = False  # cannot hold without delete rights, check it normally instead
+        self.window.add(msg)
+        self.queue.put(
+            f"deep:{job.dedupe}",
+            {
+                "event": ev,
+                "received_at": job.payload["received_at"],
+                "window": [{"id": m.id, "text": m.text} for m in earlier],
+                "held": hold,
+                "exposed": exposed,
+            },
+            partition_key=job.dedupe,
+            topic=DEEP,
+        )
+        return None
+
+    # ---- deep lane ------------------------------------------------------------------
+
+    def deep(self, job: Job) -> Decision:
+        p = job.payload
+        ev = p["event"]
+        cid = ev["channel"]
+        started = time.time()
+        msg = self.to_message(ev, self.channel_name(cid), self.channel_guests(cid))
+        chain = [
+            Message(id=w["id"], channel_id=cid, author_id=ev["user"], text=w["text"])
+            for w in p["window"]
+        ]
+
+        t = time.perf_counter()
+        decision = pipeline.run(msg, window=chain, audit_log=False)
         decision.timing_ms["decide"] = int((time.perf_counter() - t) * 1000)
-        decision.timing_ms["queue"] = int((started - job.payload["received_at"]) * 1000)
+        decision.timing_ms["queue"] = int((started - p["received_at"]) * 1000)
+        held = p["held"]
 
         if decision.action in REMOVING:
-            self.remove(job, decision, msg, ev)
-        if decision.action in ("allow", "log", "warn"):
-            self.window.add(msg)
-        if decision.action not in ("allow", "log"):
-            self.notify(job, decision, msg)
+            if held:
+                decision.timing_ms["exposed"] = p["exposed"]
+                if not reached(job, "deleted"):
+                    others = [i for i in decision.related_ids if i != msg.id]
+                    self.delete(cid, others)
+                    self.queue.set_stage(job, "deleted")
+                self.window.forget(decision.related_ids or [msg.id])
+            else:
+                self.remove(job, decision, msg, ev)
+        elif held:
+            decision.timing_ms["exposed"] = p["exposed"]
+            self.release(job, msg, ev)
 
+        if decision.action not in ("allow", "log"):
+            self.notify(job, decision, msg, ev)
         audit.record(msg, decision)
-        log.info(
-            "%s %s %s path=%s related=%d %s",
-            msg.id,
-            decision.action,
-            decision.rule_id or "-",
-            path,
-            len(decision.related_ids),
-            decision.timing_ms,
-        )
+        self._log("deep", msg, decision, held=held)
         return decision
+
+    # ---- side effects ---------------------------------------------------------------
 
     def remove(self, job: Job, decision: Decision, msg: Message, ev: dict) -> None:
         targets = decision.related_ids or [msg.id]
-        if job.stage == "":
+        if not reached(job, "deleted"):
             if not self.delete(msg.channel_id, targets):
                 decision.action = "warn"  # could not remove, fall back to telling the author
                 return
-            posted_at = float((ev.get("edited") or {}).get("ts") or ev["ts"])
-            decision.timing_ms["exposed"] = int((time.time() - posted_at) * 1000)
+            decision.timing_ms["exposed"] = ms_since(posted_at(ev))
             self.queue.set_stage(job, "deleted")
         self.window.forget(targets)
 
@@ -164,8 +245,26 @@ class Worker:
                 ok = False
         return ok
 
-    def notify(self, job: Job, decision: Decision, msg: Message) -> None:
-        if decision.action == "mask" and job.stage == "deleted":
+    def _thread(self, ev: dict) -> dict:
+        ts = ev.get("thread_ts")
+        return {"thread_ts": ts} if ts and ts != ev["ts"] else {}
+
+    def release(self, job: Job, msg: Message, ev: dict) -> None:
+        """A held message passed every check: put it back under the author's name."""
+        if reached(job, "released"):
+            return
+        icon = (self.person(msg.author_id).get("profile") or {}).get("image_72")
+        self.bot.chat_postMessage(
+            channel=msg.channel_id,
+            text=msg.text,
+            username=f"{self.display_name(msg.author_id)} (via Blackline)",
+            **({"icon_url": icon} if icon else {"icon_emoji": ":speech_balloon:"}),
+            **self._thread(ev),
+        )
+        self.queue.set_stage(job, "released")
+
+    def notify(self, job: Job, decision: Decision, msg: Message, ev: dict) -> None:
+        if decision.action == "mask" and reached(job, "deleted") and not reached(job, "reposted"):
             if decision.related_ids:
                 text = SPLIT_NOTICE.format(n=len(decision.related_ids))
             elif any(f.note == "obfuscated" for f in decision.findings):
@@ -175,11 +274,12 @@ class Worker:
             self.bot.chat_postMessage(
                 channel=msg.channel_id,
                 text=text,
-                username=f"{self.author_name(msg.author_id)} (redacted by Blackline)",
+                username=f"{self.display_name(msg.author_id)} (redacted by Blackline)",
                 icon_emoji=":black_square:",
+                **self._thread(ev),
             )
             self.queue.set_stage(job, "reposted")
-        if job.stage != "notified":
+        if not reached(job, "notified"):
             entities = ", ".join(sorted({f.entity for f in decision.findings}))
             n = len(decision.related_ids)
             across = f" across {n} messages" if n else ""
@@ -193,23 +293,39 @@ class Worker:
                 log.warning("ephemeral failed: %s", e.response.get("error"))
             self.queue.set_stage(job, "notified")
 
-    def run_forever(self, partition: int, stop: threading.Event) -> None:
+    def _log(self, lane: str, msg: Message, d: Decision, held: bool = False) -> None:
+        log.info(
+            "%s lane=%s held=%s %s %s related=%d %s",
+            msg.id,
+            lane,
+            held,
+            d.action,
+            d.rule_id or "-",
+            len(d.related_ids),
+            {k: v for k, v in d.timing_ms.items() if v is not None},
+        )
+
+    # ---- workers --------------------------------------------------------------------
+
+    def run_forever(self, topic: str, partition: int, stop: threading.Event) -> None:
+        handler = self.triage if topic == TRIAGE else self.deep
         while not stop.is_set():
-            job = self.queue.claim(partition, wait=1.0)
+            job = self.queue.claim(partition, wait=1.0, topic=topic)
             if job is None:
                 continue
             try:
-                self.handle(job)
+                handler(job)
                 self.queue.done(job)
-                ev = job.payload["event"]
-                self.queue.advance_cursor(ev["channel"], ev["ts"])
+                if topic == TRIAGE:
+                    ev = job.payload["event"]
+                    self.queue.advance_cursor(ev["channel"], ev["ts"])
             except Exception as e:
                 status = self.queue.fail(job, repr(e))
                 log.exception(
-                    "job %s failed (attempt %d, now %s)", job.dedupe, job.attempts, status
+                    "%s job %s failed (attempt %d, now %s)", topic, job.dedupe, job.attempts, status
                 )
 
-    # ---- restart recovery ------------------------------------------------------------
+    # ---- restart recovery -----------------------------------------------------------
 
     def catch_up(self, max_age_s: float = 180, max_messages: int = 1000) -> int:
         """Queue anything posted while the bot was down, and rebuild each author's recent
@@ -239,5 +355,5 @@ class Worker:
                 if float(ev["ts"]) > float(last_ts):
                     missed += self.enqueue(ev)
                 else:
-                    self.window.add(self.to_message(ev, lookup=False), now=float(ev["ts"]))
+                    self.window.add(self.to_message(ev), now=float(ev["ts"]))
         return missed

@@ -89,3 +89,6 @@ channels:
         action: log
   "#random":
     tier1_trigger: never
+  "#blackline-hold":
+    hold: true              # delete every message on arrival, repost it once every check passes
+    tier1_trigger: always

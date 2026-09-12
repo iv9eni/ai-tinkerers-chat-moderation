@@ -62,7 +62,8 @@ A hit on folded text removes the whole message and posts a notice instead of a m
 - **No double actions.** Each message is stored once, keyed by channel and timestamp. Each side effect (delete, repost, notice) is recorded on the job, so a retry skips what already happened.
 - **Order per author.** Jobs are partitioned by channel and author, and a job waiting on retry blocks the ones behind it. Split-message detection depends on this.
 - **Failures are visible.** A job retries with backoff up to 5 times, then is marked dead. `make queue` shows counts and dead jobs.
-- **Delete first.** Workers run the rules with no network calls. On a hit they delete before any lookup or model call. `timing_ms.exposed` in `audit.jsonl` is how long the message was visible.
+- **Delete first, two lanes.** The triage lane runs the rules with no network calls and deletes on a hit before any lookup or model call. Everything else moves to the deep lane, which runs the model checks on its own workers, so a slow model call never delays a delete. `timing_ms.exposed` in `audit.jsonl` is how long the message was visible.
+- **Hold mode, per channel.** With `hold: true` in the policy, every message is deleted on arrival and reposted under the author's name, marked "via Blackline", once every check passes. Nothing sensitive is visible for longer than one delete call, even findings that need the model. The cost: messages come back as bot posts, so authors cannot edit them and reactions start fresh. `#blackline-hold` in `policies/default.yaml` is the example.
 
 On GCP, `src/blackline/jobqueue.py` is the one file to swap for Pub/Sub with an ordering key.
 

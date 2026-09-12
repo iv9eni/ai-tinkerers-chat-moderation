@@ -1,11 +1,15 @@
-"""Durable job queue on SQLite.
+"""Durable job queue on SQLite, with lanes.
 
 Every event is written to disk before Slack gets its acknowledgement, so a crash never
-loses a message. Jobs for one author stay in order. Failed jobs retry with backoff and
-end up as 'dead' after MAX_ATTEMPTS so nothing disappears silently.
+loses a message. Jobs in one lane and partition stay in order. Failed jobs retry with
+backoff and end up as 'dead' after MAX_ATTEMPTS so nothing disappears silently.
 
-On GCP this file is the only thing to replace: Pub/Sub with an ordering key gives the
-same guarantees.
+Lanes (topics) have their own partitions and workers:
+  triage  partitioned by channel and author, so each author's messages stay in order
+  deep    partitioned by message, any order, so slow model calls run side by side
+
+On GCP this file is the only thing to replace: one Pub/Sub topic per lane, with an
+ordering key on the triage topic, gives the same guarantees.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id           INTEGER PRIMARY KEY,
     dedupe       TEXT UNIQUE NOT NULL,
+    topic        TEXT NOT NULL DEFAULT 'triage',   -- triage | deep
     partition    INTEGER NOT NULL,
     payload      TEXT NOT NULL,
     status       TEXT NOT NULL DEFAULT 'queued',   -- queued | processing | done | dead
@@ -32,7 +37,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at  REAL,
     error        TEXT
 );
-CREATE INDEX IF NOT EXISTS jobs_head ON jobs (partition, status, id);
 CREATE TABLE IF NOT EXISTS cursors (
     key     TEXT PRIMARY KEY,
     last_ts TEXT NOT NULL
@@ -54,44 +58,80 @@ class Job:
 
 class JobQueue:
     def __init__(
-        self, path: str = ":memory:", partitions: int = 4, max_attempts: int = MAX_ATTEMPTS
+        self,
+        path: str = ":memory:",
+        partitions: int | dict[str, int] = 4,
+        max_attempts: int = MAX_ATTEMPTS,
     ):
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")  # durable across process crashes
         self.db.executescript(SCHEMA)
+        self._migrate()
+        if isinstance(partitions, int):
+            partitions = {"triage": partitions, "deep": partitions}
         self.partitions = partitions
         self.max_attempts = max_attempts
         self._cv = threading.Condition()
 
-    def partition_of(self, key: str) -> int:
-        return zlib.crc32(key.encode()) % self.partitions
+    def _migrate(self) -> None:
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(jobs)")}
+        if "topic" not in cols:  # database from before the lanes existed
+            self.db.execute("ALTER TABLE jobs ADD COLUMN topic TEXT NOT NULL DEFAULT 'triage'")
+        self.db.execute(
+            "CREATE INDEX IF NOT EXISTS jobs_lane_head ON jobs (topic, partition, status, id)"
+        )
 
-    def put(self, dedupe: str, payload: dict, partition_key: str, now: float | None = None) -> bool:
+    def partition_of(self, key: str, topic: str = "triage") -> int:
+        return zlib.crc32(key.encode()) % self.partitions.get(topic, 1)
+
+    def put(
+        self,
+        dedupe: str,
+        payload: dict,
+        partition_key: str,
+        now: float | None = None,
+        topic: str = "triage",
+    ) -> bool:
         """Store a job. Returns False when the same dedupe key was already stored."""
         now = time.time() if now is None else now
         with self._cv:
             cur = self.db.execute(
-                "INSERT OR IGNORE INTO jobs (dedupe, partition, payload, available_at, created_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (dedupe, self.partition_of(partition_key), json.dumps(payload), now, now),
+                "INSERT OR IGNORE INTO jobs"
+                " (dedupe, topic, partition, payload, available_at, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    dedupe,
+                    topic,
+                    self.partition_of(partition_key, topic),
+                    json.dumps(payload),
+                    now,
+                    now,
+                ),
             )
             added = cur.rowcount == 1
             if added:
                 self._cv.notify_all()
             return added
 
-    def claim(self, partition: int, wait: float = 0.0, now: float | None = None) -> Job | None:
-        """Take the oldest job in a partition. A job waiting on backoff blocks the ones behind
-        it, which keeps each author's messages in order."""
+    def claim(
+        self,
+        partition: int,
+        wait: float = 0.0,
+        now: float | None = None,
+        topic: str = "triage",
+    ) -> Job | None:
+        """Take the oldest job in a lane's partition. A job waiting on backoff blocks the ones
+        behind it, which keeps each author's messages in order."""
         deadline = time.time() + wait
         with self._cv:
             while True:
                 t = time.time() if now is None else now
                 row = self.db.execute(
                     "SELECT id, dedupe, payload, attempts, stage, available_at FROM jobs"
-                    " WHERE partition = ? AND status = 'queued' ORDER BY id LIMIT 1",
-                    (partition,),
+                    " WHERE topic = ? AND partition = ? AND status = 'queued'"
+                    " ORDER BY id LIMIT 1",
+                    (topic, partition),
                 ).fetchone()
                 if row and row[5] <= t:
                     self.db.execute(
@@ -139,8 +179,10 @@ class JobQueue:
 
     def counts(self) -> dict[str, int]:
         with self._cv:
-            rows = self.db.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status").fetchall()
-        return dict(rows)
+            rows = self.db.execute(
+                "SELECT topic, status, COUNT(*) FROM jobs GROUP BY topic, status"
+            ).fetchall()
+        return {f"{topic}/{status}": n for topic, status, n in rows}
 
     def dead(self, limit: int = 20) -> list[tuple[int, str, str]]:
         with self._cv:
