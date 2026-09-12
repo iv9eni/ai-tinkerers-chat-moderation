@@ -9,3 +9,4 @@ data/demo_messages.json
 data/holdout.json
 blackline.db
 blackline.db-*
+blackline.*.log

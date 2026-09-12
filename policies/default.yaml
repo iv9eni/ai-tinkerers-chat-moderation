@@ -11,13 +11,13 @@ defaults:
 rules:
   - id: pci.card.default
     entity: CREDIT_CARD
-    action: mask
+    action: block
     source_url: https://www.pcisecuritystandards.org/
     message: "Card numbers can't be shared here (PCI DSS requirement 3)."
 
   - id: pci.card.unverified
     entity: CARD_LIKE
-    action: mask
+    action: block
     min_confidence: 0.7
     message: "That looks like a card number. Card numbers can't be shared here, even with filler between the digits."
 

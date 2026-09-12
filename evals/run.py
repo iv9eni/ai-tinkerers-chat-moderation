@@ -32,7 +32,7 @@ CASES = Path(__file__).with_name("cases.yaml")
 
 
 def load_cases() -> list[dict]:
-    return yaml.safe_load(CASES.read_text())
+    return yaml.safe_load(CASES.read_text(encoding="utf-8"))
 
 
 def outcome(case: dict, use_model: bool) -> str:
