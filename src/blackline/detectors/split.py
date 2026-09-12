@@ -35,6 +35,10 @@ def detect(texts: list[str]) -> SplitHit | None:
     if len(groups) < 2:
         return None
     context = " ".join(normalize(t) for t in texts)
+    # digits hidden as emoji or unicode, or messages that hold nothing but digits, need no
+    # context word: sending a card in bare chunks is itself the signal
+    disguised = [disguised_digit_count(t) > 0 for t in texts]
+    bare = [not re.search(r"[^\W\d_]", normalize(t)) for t in texts]
     last = len(texts) - 1
     for start in range(len(groups)):
         digits, used = "", []
@@ -47,8 +51,14 @@ def detect(texts: list[str]) -> SplitHit | None:
             # only report hits that include the current message, older ones were already judged
             if not spans_messages or last not in used:
                 continue
+            hidden = all(disguised[i] for i in used)
+            only_digits = all(bare[i] or disguised[i] for i in used)
             for entity, check in (("CREDIT_CARD", _is_card), ("CA_SIN", _is_sin)):
-                if check(digits) and CONTEXT[entity].search(context):
+                if not check(digits):
+                    continue
+                # a 9-digit SIN is too short to trust bare chunks, so only hidden digits count
+                no_context_ok = hidden or (entity == "CREDIT_CARD" and only_digits)
+                if no_context_ok or CONTEXT[entity].search(context):
                     return SplitHit(entity, sorted(set(used)), 0.9)
     return None
 

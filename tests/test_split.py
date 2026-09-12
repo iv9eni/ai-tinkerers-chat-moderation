@@ -55,3 +55,26 @@ def test_window_per_author_and_expiry():
     assert [m.id for m in w.recent(_m(9), now=61)] == ["C1.3"]
     w.forget(["C1.3"])
     assert w.recent(_m(9), now=62) == []
+
+
+def test_emoji_card_split_without_context_word():
+    # the exact messages from the test channel: keycap emoji, no word like "card"
+    texts = [
+        ":four::one::one::one:",
+        ":one::one::one::one:",
+        ":one::one::one::one: :one::one::one::one:",
+    ]
+    hit = split.detect(texts)
+    assert hit and hit.entity == "CREDIT_CARD" and hit.message_indexes == [0, 1, 2]
+
+
+def test_bare_digit_messages_form_card():
+    assert split.detect(["4532", "0151", "1283 0366"])
+
+
+def test_bare_digits_alone_do_not_make_a_sin():
+    assert split.detect(["130", "692 544"]) is None
+
+
+def test_bare_digits_that_fail_luhn_do_not_combine():
+    assert split.detect(["4532", "0151", "1283 0367"]) is None
