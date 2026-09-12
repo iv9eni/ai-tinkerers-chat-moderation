@@ -44,4 +44,6 @@ def test_dashboard_renders_shareable_html(tmp_path):
     assert "Token Optimization" in html
     assert "Zero-token decisions" in html
     assert "Estimated CO2e avoided" in html
+    assert "Carbon footprint visual" in html
+    assert "Lower Footprint By Routing Less To The Model" in html
     assert "CARD_LIKE" in html

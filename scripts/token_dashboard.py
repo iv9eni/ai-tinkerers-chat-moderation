@@ -221,6 +221,52 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
       gap: 18px;
       align-items: start;
     }}
+    .carbon-layout {{
+      display: grid;
+      grid-template-columns: minmax(240px, .85fr) 1.15fr;
+      gap: 18px;
+      align-items: center;
+      margin-bottom: 18px;
+    }}
+    .carbon-art {{
+      width: 100%;
+      max-width: 360px;
+      display: block;
+      margin: 0 auto;
+    }}
+    .carbon-art text {{
+      fill: var(--ink);
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      font-weight: 700;
+    }}
+    .impact-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }}
+    .impact {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 132px;
+    }}
+    .impact svg {{
+      width: 44px;
+      height: 44px;
+      display: block;
+      margin-bottom: 10px;
+    }}
+    .impact strong {{
+      display: block;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }}
+    .impact span {{
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }}
     .bar-row {{ margin-top: 16px; }}
     .bar-label {{
       display: flex;
@@ -271,10 +317,11 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
     }}
     @media (max-width: 820px) {{
       main {{ padding: 18px; }}
-      header, .layout {{ display: block; }}
+      header, .layout, .carbon-layout {{ display: block; }}
       .meta {{ text-align: left; margin-top: 12px; }}
       .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .card {{ margin-bottom: 14px; }}
+      .impact-grid {{ grid-template-columns: 1fr; }}
     }}
     @media (max-width: 480px) {{
       .grid {{ grid-template-columns: 1fr; }}
@@ -319,6 +366,60 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
         <div class="label">Estimated CO2e avoided</div>
         <div class="value good">{fmt_co2e(summary["estimated_co2e_g"])}</div>
         <p>Scenario estimate at {summary["grams_co2e_per_1k_tokens"]:g} g CO2e / 1K tokens</p>
+      </div>
+    </section>
+
+    <section class="card carbon-layout" aria-label="Carbon footprint visual">
+      <svg class="carbon-art" viewBox="0 0 320 220" role="img" aria-labelledby="co2-title co2-desc">
+        <title id="co2-title">Estimated carbon reduction from avoided model calls</title>
+        <desc id="co2-desc">A cloud labelled CO2 with a downward arrow, connected to local filtering and fewer model calls.</desc>
+        <defs>
+          <linearGradient id="carbon-grad" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0%" stop-color="var(--good)" stop-opacity=".35"/>
+            <stop offset="100%" stop-color="var(--accent)" stop-opacity=".25"/>
+          </linearGradient>
+        </defs>
+        <rect x="18" y="22" width="284" height="176" rx="18" fill="url(#carbon-grad)"/>
+        <path d="M89 115c-20 0-36-15-36-34s16-34 36-34c9 0 17 3 23 8 8-18 27-30 49-30 30 0 54 22 56 50 19 2 34 18 34 37 0 21-18 38-40 38H89z"
+          fill="var(--surface)" stroke="var(--line)" stroke-width="2"/>
+        <text x="160" y="98" text-anchor="middle" font-size="38">CO2e</text>
+        <path d="M160 122v45" stroke="var(--good)" stroke-width="10" stroke-linecap="round"/>
+        <path d="M136 150l24 24 24-24" fill="none" stroke="var(--good)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="69" cy="166" r="20" fill="var(--surface)" stroke="var(--line)" stroke-width="2"/>
+        <path d="M59 166l8 8 16-19" fill="none" stroke="var(--good)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="252" cy="166" r="20" fill="var(--surface)" stroke="var(--line)" stroke-width="2"/>
+        <path d="M242 168h20M252 158v20" stroke="var(--accent)" stroke-width="5" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <h2>Lower Footprint By Routing Less To The Model</h2>
+        <p>The CO2e number is an estimate, but the routing signal is real: every zero-token decision avoids a model request that a naive always-model design would have made.</p>
+        <div class="impact-grid">
+          <div class="impact">
+            <svg viewBox="0 0 48 48" role="img" aria-label="Local rules">
+              <rect x="8" y="10" width="32" height="28" rx="5" fill="none" stroke="var(--accent)" stroke-width="3"/>
+              <path d="M16 24l6 6 12-14" fill="none" stroke="var(--good)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <strong>{summary["zero_token"]:,} local decisions</strong>
+            <span>Handled by rules, checksums, and policy before any model call.</span>
+          </div>
+          <div class="impact">
+            <svg viewBox="0 0 48 48" role="img" aria-label="Avoided tokens">
+              <path d="M10 16h20M10 24h28M10 32h14" stroke="var(--accent)" stroke-width="4" stroke-linecap="round"/>
+              <path d="M35 30l5 5 5-5M40 12v22" stroke="var(--good)" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <strong>{fmt_int(summary["estimated_avoided"])} tokens avoided</strong>
+            <span>Estimated versus sending every audited message to a model.</span>
+          </div>
+          <div class="impact">
+            <svg viewBox="0 0 48 48" role="img" aria-label="Estimated CO2e avoided">
+              <path d="M16 30c-6 0-10-4-10-9s4-9 10-9c3 0 5 1 7 3 3-5 8-8 14-7 8 1 13 7 13 15 5 1 8 5 8 10 0 6-5 11-12 11H16z"
+                fill="none" stroke="var(--accent)" stroke-width="3"/>
+              <path d="M22 31v9M16 35l6 6 6-6" fill="none" stroke="var(--good)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <strong>{fmt_co2e(summary["estimated_co2e_g"])} CO2e avoided</strong>
+            <span>Scenario estimate using the factor shown above.</span>
+          </div>
+        </div>
       </div>
     </section>
 
