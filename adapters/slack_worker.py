@@ -357,13 +357,14 @@ class Worker:
 
     def _log(self, lane: str, msg: Message, d: Decision, held: bool = False) -> None:
         log.info(
-            "%s lane=%s held=%s %s %s related=%d %s",
+            "%s lane=%s held=%s %s %s related=%d window=%d %s",
             msg.id,
             lane,
             held,
             d.action,
             d.rule_id or "-",
             len(d.related_ids),
+            len(self.window.recent(msg)),
             {k: v for k, v in d.timing_ms.items() if v is not None},
         )
 
