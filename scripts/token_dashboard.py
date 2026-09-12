@@ -168,7 +168,7 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Blackline Token Optimization</title>
+  <title>Blackline Token Optimization + Carbon Footprint</title>
   <style>
     :root {{
       color-scheme: light dark;
@@ -347,8 +347,8 @@ def render(summary: dict[str, Any], audit_path: Path) -> str:
   <main>
     <header>
       <div>
-        <h1>Token Optimization</h1>
-        <p>Blackline routes obvious sensitive messages through deterministic checks, saving model calls for ambiguous cases.</p>
+        <h1>Token Optimization + Carbon Footprint</h1>
+        <p>Blackline routes obvious sensitive messages through deterministic checks, reducing model calls, estimated cost, and estimated compute-related emissions.</p>
       </div>
       <div class="meta">
         <div>Generated {html.escape(generated)}</div>

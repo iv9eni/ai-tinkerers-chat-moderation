@@ -54,7 +54,7 @@ def test_dashboard_renders_shareable_html(tmp_path):
 
     html = render(summary, tmp_path / "audit.jsonl")
 
-    assert "Token Optimization" in html
+    assert "Token Optimization + Carbon Footprint" in html
     assert "Zero-token decisions" in html
     assert "Estimated CO2e avoided" in html
     assert "Estimated spend avoided" in html
