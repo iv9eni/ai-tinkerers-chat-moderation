@@ -20,6 +20,7 @@ class FakeSlack:
         def call(**kw):
             self.calls.append((self.name, method, kw))
             return {
+                "chat_postMessage": {"ok": True, "ts": f"{len(self.calls)}.000100"},
                 "users_info": {
                     "user": {
                         "real_name": "Ivgeni",
@@ -167,6 +168,85 @@ def test_model_finding_is_removed_in_the_deep_lane(setup):
     d = run_deep(w, q)
     assert d.action == "mask" and ("user", "chat_delete") in names(calls)
     assert "exposed" in d.timing_ms
+
+
+def test_masked_message_has_manager_restore_button(setup, monkeypatch):
+    monkeypatch.setenv("MANAGER_USER_IDS", "UMANAGER")
+    w, q, calls, model = setup
+    text = "her home address is 12 Elm St, Guelph"
+    model["single"] = [
+        Finding(
+            entity="ADDRESS",
+            start=20,
+            end=len(text),
+            confidence=0.95,
+            subject="third_party",
+            tier=1,
+        )
+    ]
+    w.enqueue(event(text))
+    run_triage(w, q)
+    run_deep(w, q)
+
+    [post] = [kw for _, m, kw in calls if m == "chat_postMessage"]
+
+    assert post["blocks"][1]["elements"][0]["action_id"] == "blackline_restore"
+    assert post["blocks"][1]["elements"][0]["value"]
+
+
+def test_manager_can_restore_a_false_positive(setup, monkeypatch):
+    monkeypatch.setenv("MANAGER_USER_IDS", "UMANAGER")
+    w, q, calls, model = setup
+    text = "her home address is 12 Elm St, Guelph"
+    model["single"] = [
+        Finding(
+            entity="ADDRESS",
+            start=20,
+            end=len(text),
+            confidence=0.95,
+            subject="third_party",
+            tier=1,
+        )
+    ]
+    w.enqueue(event(text))
+    run_triage(w, q)
+    run_deep(w, q)
+    [post] = [kw for _, m, kw in calls if m == "chat_postMessage"]
+    restore_id = post["blocks"][1]["elements"][0]["value"]
+
+    ok, message = w.restore_redaction(restore_id, "UMANAGER")
+    restored = [kw for _, m, kw in calls if m == "chat_postMessage"][-1]
+
+    assert ok and "Restored" in message
+    assert ("bot", "chat_delete") in names(calls)
+    assert restored["text"] == text
+    assert restored["username"] == "Ivgeni D (restored by Blackline)"
+
+
+def test_non_manager_cannot_restore(setup, monkeypatch):
+    monkeypatch.setenv("MANAGER_USER_IDS", "UMANAGER")
+    w, q, calls, model = setup
+    text = "her home address is 12 Elm St, Guelph"
+    model["single"] = [
+        Finding(
+            entity="ADDRESS",
+            start=20,
+            end=len(text),
+            confidence=0.95,
+            subject="third_party",
+            tier=1,
+        )
+    ]
+    w.enqueue(event(text))
+    run_triage(w, q)
+    run_deep(w, q)
+    [post] = [kw for _, m, kw in calls if m == "chat_postMessage"]
+    restore_id = post["blocks"][1]["elements"][0]["value"]
+
+    ok, message = w.restore_redaction(restore_id, "UOTHER")
+
+    assert not ok and "managers" in message
+    assert w.restores.consume(restore_id) is not None
 
 
 # ---- hold mode ------------------------------------------------------------------------

@@ -60,7 +60,13 @@ class KeepAliveSlack:
         return lambda **params: self.api_call(method, **params)
 
     def api_call(self, method: str, **params) -> dict:
-        body = urlencode({k: v for k, v in params.items() if v is not None})
+        body = urlencode(
+            {
+                k: json.dumps(v) if isinstance(v, (dict, list)) else v
+                for k, v in params.items()
+                if v is not None
+            }
+        )
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",

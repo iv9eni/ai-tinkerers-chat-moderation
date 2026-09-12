@@ -26,5 +26,7 @@ settings:
       - message.groups
       - message.im
       - message.mpim
+  interactivity:
+    is_enabled: true
   socket_mode_enabled: true
   token_rotation_enabled: false
