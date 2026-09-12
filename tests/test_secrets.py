@@ -67,3 +67,45 @@ def test_errors_name_the_secret_but_never_the_value():
         secrets.load("p", fake, NAMES)
     assert "AUDIT_HMAC_KEY: PermissionError" in str(e.value)
     assert "xoxb-very-secret" not in str(e.value)
+
+
+def test_does_not_connect_when_nothing_is_missing(monkeypatch):
+    for n in NAMES:
+        monkeypatch.setenv(n, "set")
+
+    def boom():
+        raise AssertionError("should not connect")
+
+    assert secrets.load("p", names=NAMES, connect=boom) == []
+
+
+def test_connect_turns_credential_errors_into_a_clear_message(monkeypatch):
+    import google.cloud.secretmanager as sm
+
+    def no_credentials(*a, **k):
+        raise RuntimeError("Your default credentials were not found")
+
+    monkeypatch.setattr(sm, "SecretManagerServiceClient", no_credentials)
+    with pytest.raises(secrets.SecretsError, match="application-default login"):
+        secrets.load("p", names=NAMES)
+
+
+def test_secret_manager_beats_env_file_but_not_the_shell(monkeypatch, tmp_path):
+    import os
+
+    from dotenv import dotenv_values
+
+    from adapters.slack_app import load_config
+
+    for n in (*NAMES, "SECRETS_PROJECT"):
+        monkeypatch.setenv(n, "x")  # makes monkeypatch restore the original state afterwards
+        monkeypatch.delenv(n)
+    env = tmp_path / ".env"
+    env.write_text("SLACK_BOT_TOKEN=from-file\nAUDIT_HMAC_KEY=from-file\nSECRETS_PROJECT=p\n")
+    fake = FakeSecretManager({"SLACK_BOT_TOKEN": "from-sm", "AUDIT_HMAC_KEY": "from-sm"})
+    monkeypatch.setattr(secrets, "SECRET_NAMES", NAMES)
+    monkeypatch.setenv("AUDIT_HMAC_KEY", "from-shell")
+
+    load_config(str(env), dotenv_values(env), client=fake)
+    assert os.environ["SLACK_BOT_TOKEN"] == "from-sm"  # Secret Manager beats the file
+    assert os.environ["AUDIT_HMAC_KEY"] == "from-shell"  # the shell beats both
