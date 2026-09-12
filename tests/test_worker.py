@@ -323,3 +323,32 @@ def test_release_keeps_thread_replies_in_their_thread(setup):
     run_deep(w, q)
     [release] = [kw for _, m, kw in calls if m == "chat_postMessage"]
     assert release["thread_ts"] == "2.1"
+
+
+# ---- Slack markup ---------------------------------------------------------------------
+
+
+def test_slack_link_markup_is_folded_before_detection():
+    from adapters.slack_worker import plain_text
+
+    assert plain_text("her email is <mailto:her@example.ca|her@example.ca>") == (
+        "her email is her@example.ca"
+    )
+    assert plain_text("call <tel:6474077245|647-407-7245> now") == "call 647-407-7245 now"
+    assert (
+        plain_text("see <https://x.io|the doc> &amp; <https://y.io>")
+        == "see the doc & https://y.io"
+    )
+    assert plain_text("<@U123> in <#C456|general>") == "U123 in general"
+
+
+def test_masked_repost_hides_the_email_not_only_the_link_target(setup):
+    w, q, calls, model = setup
+    model["single"] = [
+        Finding(entity="EMAIL", start=13, end=27, confidence=0.95, subject="third_party", tier=1)
+    ]
+    w.enqueue(event("her email is <mailto:her@example.ca|her@example.ca>"))
+    run_triage(w, q)
+    run_deep(w, q)
+    posted = [kw["text"] for _, m, kw in calls if m == "chat_postMessage"]
+    assert posted and "her@example.ca" not in posted[0] and "█" in posted[0]

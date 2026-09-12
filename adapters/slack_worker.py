@@ -16,7 +16,9 @@ deletes, posts, or releases twice.
 
 from __future__ import annotations
 
+import html
 import logging
+import re
 import threading
 import time
 
@@ -38,6 +40,22 @@ STAGES = ["", "held", "deleted", "released", "reposted", "notified"]
 
 def reached(job: Job, stage: str) -> bool:
     return STAGES.index(job.stage or "") >= STAGES.index(stage)
+
+
+_LINK = re.compile(r"<(?:mailto:|tel:|#|@)?([^|>]*)(?:\|([^>]*))?>")
+
+
+def plain_text(text: str) -> str:
+    """Slack wraps addresses and links in its own markup: an email arrives as
+    <mailto:a@b.ca|a@b.ca>, a phone as <tel:555|555>, a link as <https://x|label>.
+    Masking only the first copy would leave the visible label readable, so fold the
+    markup to what the person sees before any detector runs."""
+
+    def unwrap(m: re.Match) -> str:
+        target, label = m.group(1), m.group(2)
+        return label if label else target
+
+    return html.unescape(_LINK.sub(unwrap, text))
 
 
 def human_event(event: dict) -> dict | None:
@@ -136,7 +154,7 @@ class Worker:
             channel_name=name,
             channel_has_guests=guests,
             author_id=ev["user"],
-            text=ev.get("text", ""),
+            text=plain_text(ev.get("text", "")),
         )
 
     # ---- triage lane ----------------------------------------------------------------
