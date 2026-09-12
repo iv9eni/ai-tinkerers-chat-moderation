@@ -39,7 +39,15 @@ def detect(texts: list[str]) -> SplitHit | None:
     # context word: sending a card in bare chunks is itself the signal
     disguised = [disguised_digit_count(t) > 0 for t in texts]
     bare = [not re.search(r"[^\W\d_]", normalize(t)) for t in texts]
+    # the message under review is the last one; when it holds no digits ("card number
+    # above ^") it may still be the context word that turns earlier digits into a hit, so
+    # the hit must include the latest message that does carry digits
     last = len(texts) - 1
+    new_context = not digit_groups(texts[-1])
+    if new_context:
+        # earlier digits were already judged, so only the new word can change the answer
+        last = groups[-1][1]
+        context = normalize(texts[-1])
     for start in range(len(groups)):
         digits, used = "", []
         for g, idx in groups[start : start + MAX_GROUPS]:
@@ -57,7 +65,9 @@ def detect(texts: list[str]) -> SplitHit | None:
                 if not check(digits):
                     continue
                 # a 9-digit SIN is too short to trust bare chunks, so only hidden digits count
-                no_context_ok = hidden or (entity == "CREDIT_CARD" and only_digits)
+                no_context_ok = not new_context and (
+                    hidden or (entity == "CREDIT_CARD" and only_digits)
+                )
                 if no_context_ok or CONTEXT[entity].search(context):
                     return SplitHit(entity, sorted(set(used)), 0.9)
     return None

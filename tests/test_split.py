@@ -78,3 +78,14 @@ def test_bare_digits_alone_do_not_make_a_sin():
 
 def test_bare_digits_that_fail_luhn_do_not_combine():
     assert split.detect(["4532", "0151", "1283 0367"]) is None
+
+
+def test_context_word_after_bare_digits():
+    # the exact messages from the test channel: digits first, the card word last
+    texts = ["4111 1111", "1111 1111", "credit card number above ^"]
+    hit = split.detect(texts)
+    assert hit and hit.entity == "CREDIT_CARD" and hit.message_indexes == [0, 1]
+
+
+def test_context_word_alone_does_not_combine_unrelated_numbers():
+    assert split.detect(["order 4532", "room 0151", "card?"]) is None
